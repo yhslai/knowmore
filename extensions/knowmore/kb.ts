@@ -38,8 +38,34 @@ export interface KnowledgeBaseCatalogResult {
 	warnings: string[];
 }
 
+export function getMissingKnowledgeBaseRootDirectories(catalog: KnowledgeBaseCatalogResult): string[] {
+	return catalog.roots.filter((root) => !root.exists).map((root) => `${root.id}:${root.path}`);
+}
+
+export function getMissingKnowledgeBaseSources(catalog: KnowledgeBaseCatalogResult): string[] {
+	return catalog.sources.filter((source) => !source.exists).map((source) => `${source.id}:${source.path}`);
+}
+
+export function buildMissingKnowledgeBaseReferencesError(catalog: KnowledgeBaseCatalogResult): string | null {
+	const missingRoots = getMissingKnowledgeBaseRootDirectories(catalog);
+	const missingSources = getMissingKnowledgeBaseSources(catalog);
+	if (missingRoots.length === 0 && missingSources.length === 0) return null;
+
+	const issues: string[] = [];
+	if (missingRoots.length > 0) issues.push(`KB root directory does not exist: ${missingRoots.join(", ")}`);
+	if (missingSources.length > 0) issues.push(`KB source path does not exist: ${missingSources.join(", ")}`);
+	return issues.join(" | ");
+}
+
+export function ensureKnowledgeBaseReferencesExist(catalog: KnowledgeBaseCatalogResult): void {
+	const error = buildMissingKnowledgeBaseReferencesError(catalog);
+	if (!error) return;
+	throw new Error(error);
+}
+
 interface ExplicitCatalogEntry {
 	id?: unknown;
+	localId?: unknown;
 	path?: unknown;
 	description?: unknown;
 	name?: unknown;
@@ -82,6 +108,19 @@ function ensureUniqueId(baseId: string, usedIds: Set<string>): string {
 	const unique = `${normalized}-${i}`;
 	usedIds.add(unique);
 	return unique;
+}
+
+function scopeSourceId(rootId: KnowledgeBaseRootId, localId: string): string {
+	const trimmed = localId.trim();
+	if (trimmed.length === 0) return `${rootId}-source`;
+
+	const hasScopePrefix = /^(project|shared)[-_:]/i.test(trimmed);
+	if (hasScopePrefix) return trimmed;
+	return `${rootId}-${trimmed}`;
+}
+
+function toScopedBaseId(rootId: KnowledgeBaseRootId, localId: string): string {
+	return normalizeId(scopeSourceId(rootId, localId)) || `${rootId}-source`;
 }
 
 function makeRootLabel(rootId: KnowledgeBaseRootId): string {
@@ -197,17 +236,23 @@ function resolveRoots(
 	return { roots, warnings };
 }
 
-function discoverImplicitSources(root: KnowledgeBaseRoot, usedIds: Set<string>): KnowledgeBaseSource[] {
+function discoverImplicitSources(
+	root: KnowledgeBaseRoot,
+	usedIds: Set<string>,
+	explicitBaseIds: Set<string>,
+): KnowledgeBaseSource[] {
 	if (!root.exists) return [];
 
 	const entries = tryReadDirEntries(root.path)
-		.filter((entry) => entry.name !== "kb.catalog.json" && entry.isDirectory())
+		.filter((entry) => entry.name !== "kb.catalog.json" && !entry.name.startsWith(".") && entry.isDirectory())
 		.sort((a, b) => a.name.localeCompare(b.name));
 
 	const sources: KnowledgeBaseSource[] = [];
 	for (const entry of entries) {
 		const sourcePath = path.resolve(root.path, entry.name);
-		const id = ensureUniqueId(`${root.id}:${entry.name}`, usedIds);
+		const baseId = toScopedBaseId(root.id, entry.name);
+		if (explicitBaseIds.has(baseId)) continue;
+		const id = ensureUniqueId(baseId, usedIds);
 		sources.push({
 			id,
 			name: entry.name,
@@ -222,13 +267,18 @@ function discoverImplicitSources(root: KnowledgeBaseRoot, usedIds: Set<string>):
 	return sources;
 }
 
-function discoverExplicitSources(root: KnowledgeBaseRoot, usedIds: Set<string>): { sources: KnowledgeBaseSource[]; warnings: string[] } {
-	if (!root.exists) return { sources: [], warnings: [] };
+function discoverExplicitSources(root: KnowledgeBaseRoot, usedIds: Set<string>): {
+	sources: KnowledgeBaseSource[];
+	warnings: string[];
+	baseIds: Set<string>;
+} {
+	if (!root.exists) return { sources: [], warnings: [], baseIds: new Set<string>() };
 
 	const { entries, warnings } = loadExplicitCatalog(root.catalogPath);
-	if (!entries || entries.length === 0) return { sources: [], warnings };
+	if (!entries || entries.length === 0) return { sources: [], warnings, baseIds: new Set<string>() };
 
 	const sources: KnowledgeBaseSource[] = [];
+	const baseIds = new Set<string>();
 	for (let i = 0; i < entries.length; i++) {
 		const entry = entries[i];
 		const rawPath = toSafeString(entry.path);
@@ -239,8 +289,17 @@ function discoverExplicitSources(root: KnowledgeBaseRoot, usedIds: Set<string>):
 
 		const resolvedPath = path.isAbsolute(rawPath) ? path.resolve(rawPath) : path.resolve(root.path, rawPath);
 		const name = toSafeString(entry.name) ?? (path.basename(resolvedPath) || `source-${i + 1}`);
-		const preferredId = toSafeString(entry.id) ?? `${root.id}:${name}`;
-		const id = ensureUniqueId(preferredId, usedIds);
+		const legacyId = toSafeString(entry.id);
+		const localIdField = toSafeString(entry.localId);
+		if (legacyId && localIdField && legacyId !== localIdField) {
+			warnings.push(
+				`Conflicting source IDs at ${root.catalogPath} index ${i}: both 'id' and 'localId' are set; using 'localId'.`,
+			);
+		}
+		const localId = localIdField ?? legacyId ?? name;
+		const baseId = toScopedBaseId(root.id, localId);
+		baseIds.add(baseId);
+		const id = ensureUniqueId(baseId, usedIds);
 		const exists = fs.existsSync(resolvedPath);
 
 		if (exists) {
@@ -264,7 +323,7 @@ function discoverExplicitSources(root: KnowledgeBaseRoot, usedIds: Set<string>):
 		});
 	}
 
-	return { sources, warnings };
+	return { sources, warnings, baseIds };
 }
 
 export function buildKnowledgeBaseCatalog(
@@ -277,9 +336,9 @@ export function buildKnowledgeBaseCatalog(
 	const warnings = [...rootResolution.warnings];
 
 	for (const root of rootResolution.roots) {
-		sources.push(...discoverImplicitSources(root, usedIds));
 		const explicit = discoverExplicitSources(root, usedIds);
 		sources.push(...explicit.sources);
+		sources.push(...discoverImplicitSources(root, usedIds, explicit.baseIds));
 		warnings.push(...root.warnings, ...explicit.warnings);
 	}
 

@@ -4,34 +4,33 @@ Local pi package for web + local knowledge retrieval.
 
 ## What it provides
 
-### Tools:
+### Tools
 
 - `km_research_web`: search + fetch + distiller model compression (OpenRouter)
 - `km_search_web`: Brave Search web results (title, URL, snippet)
 - `km_fetch_url`: fetch/extract readable text from URL
-- `kb_list`: list local KB sources from config + implicit/explicit catalog
-- `kb_search`: query exact symbol or text from local KB sources and gather relevant results (TBD)
-- `kb_retrieve`: ask a question about local KB sources and gather relevant results (TBD)
+- `kb_search`: lexical local KB search over a persistent on-disk index (SQLite FTS5/BM25)
+  - local KB source catalog is auto-injected into the system prompt in `before_agent_start`
+- `kb_retrieve`: semantic/hybrid retrieval (planned)
 
-### Commands:
+### Commands
 
+- `/kb-index`: manage local KB index (`update | status | clear`)
+  - defaults to `status`
+  - `update` builds automatically if index does not exist
+  - supports `--scope project|shared|all`, `--all`, and repeated `--source <sourceId>`
 - `/km-diagnose`: verify config + KB discovery + Brave + distiller connectivity
-- `/km-clear-cache`: clear in-memory retrieval caches
+- `/km-clear-cache`: clear in-memory web retrieval caches
 
-### Utility Skill Trigger:
+### Utility skill triggers
 
 - `flush-commit`: Read uncommitted files and decide if commit is sensible
 - `ticket-done`: Mark a ticket as done
 - `ticket-not-done`: Mark a ticket as not done
 
-
-## Requirements
-
-- `rg` (ripgrep) available in PATH for `km_search_local`.
-
 ## Configuration
 
-### Main Configuration Files
+### Main configuration files
 
 Copy the example config file to create a global default config:
 
@@ -39,17 +38,15 @@ Copy the example config file to create a global default config:
 cp knowmore.config.example.json knowmore.config.default.json
 ```
 
-And edit it as needed.
-
-Alternatively, create a project-specific config file in your project folder:
+Or create a project-specific config file in your project folder:
 
 ```powershell
 cp ${KNOWMORE_INSTALL_DIR}/knowmore.config.example.json knowmore.config.json
 ```
 
-And edit it as needed. You can have global config, project-specific config, or both.
+You can have global config, project-specific config, or both.
 
-#### Config loading precedence:
+#### Config loading precedence
 
 At least one config file must exist (global or project).
 
@@ -72,14 +69,19 @@ Optional `kb.catalog.json` format:
 ```json
 [
   {
-    "id": "houdini-py-libs",
+    "localId": "houdini-py-libs",
     "path": "C:/Program Files/Side Effects Software/Houdini 21.0.631/houdini/python3.11libs",
     "description": "Undocumented Houdini Python libs"
   }
 ]
 ```
 
-## Installation 
+Notes:
+- `localId` is root-local and does **not** need `project-`/`shared-` prefixes.
+- Final catalog/cache IDs are scope-prefixed automatically (for example `shared-houdini-py-libs`).
+- Legacy `id` is still accepted as an alias for `localId`.
+
+## Installation
 
 From this `knowmore` directory:
 
@@ -95,10 +97,10 @@ pi install /absolute/path/to/knowmore
 
 Then in pi:
 
-- Run `/km-diagnose` first to validate your setup.
+- Run `/km-diagnose` first to validate setup.
 - For local KB retrieval:
-  - call `kb_list`
-  - then call `km_search_local` with `sourceId` for precise scope
+  - run `/kb-index update --scope project` (or `--all`)
+  - call `kb_search` (prefer passing `sourceIds` from the injected KB catalog)
 - For external knowledge, call `km_research_web` first.
 - If needed, follow specific source URLs with `km_fetch_url`.
 
@@ -108,7 +110,7 @@ Then in pi:
 2. In pi, run `/reload`
 3. Re-test
 
-
 ## Notes
 
-- Fetched URLs are cached in-memory. 
+- Fetched URLs are cached in-memory.
+- KB index is stored at `.knowmore/kb.index.sqlite` near the active project config (or global config if no project config is found).
