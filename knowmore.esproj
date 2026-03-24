@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.VisualStudio.JavaScript.Sdk/1.0.784122">
+  <PropertyGroup>
+    <!-- This tells Rider/MSBuild not to try and "build" it like a .NET project -->
+    <BuildCommand></BuildCommand>
+    <StartupCommand></StartupCommand>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- This ensures your TypeScript files are recognized as part of the project -->
+    <ProjectCapability Include="TypeScript" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <PropertyGroup>
+    <PackageJsonName Condition="$(PackageJsonName) == ''">knowmore</PackageJsonName>
+    <PackageJsonVersion Condition="$(PackageJsonVersion) == ''">0.1.0</PackageJsonVersion>
+    <PackageJsonPrivate Condition="$(PackageJsonPrivate) == ''">true</PackageJsonPrivate>
+    <PackageJsonType Condition="$(PackageJsonType) == ''">module</PackageJsonType>
+    <PackageJsonKeywords Condition="$(PackageJsonKeywords) == ''">[
+  "pi-package"
+]</PackageJsonKeywords>
+    <PackageJsonPiExtensions Condition="$(PackageJsonPiExtensions) == ''">[
+  "./extensions"
+]</PackageJsonPiExtensions>
+    <PackageJsonPiSkills Condition="$(PackageJsonPiSkills) == ''">[
+  "./skills"
+]</PackageJsonPiSkills>
+    <PackageJsonScriptsCheck Condition="$(PackageJsonScriptsCheck) == ''">tsc --noEmit</PackageJsonScriptsCheck>
+    <PackageJsonPeerdependenciesMariozechnerPiCodingAgent Condition="$(PackageJsonPeerdependenciesMariozechnerPiCodingAgent) == ''">*</PackageJsonPeerdependenciesMariozechnerPiCodingAgent>
+    <PackageJsonPeerdependenciesSinclairTypebox Condition="$(PackageJsonPeerdependenciesSinclairTypebox) == ''">*</PackageJsonPeerdependenciesSinclairTypebox>
+    <PackageJsonDevdependenciesTypescript Condition="$(PackageJsonDevdependenciesTypescript) == ''">^5.8.3</PackageJsonDevdependenciesTypescript>
+  </PropertyGroup>
+</Project>
