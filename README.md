@@ -9,7 +9,6 @@ Local pi package for external web knowledge retrieval.
 - `km_fetch_url` tool: fetch/extract readable text from URL
 - `/km-diagnose` command: verify config + Brave + distiller connectivity
 - `/km-clear-cache` command: clear in-memory retrieval caches
-- `knowmore-web` skill: for retrieval workflow guidance
 
 ## Requirements
 
@@ -67,5 +66,14 @@ Then in pi:
 
 ## Notes
 
-- Caches are in-memory for the current pi process.
-- Keep fetch scope tight; do not pull many full pages at once.
+- Fetched urls are cached in-memory. 
+
+
+## Utility skill triggers
+
+- `flush-commit`
+  - Run: `flush-commit`
+
+- `ticket-done`
+  - Mark done: `ticket-done <ticket-name>` or `td <ticket-name>`
+  - Mark not done: `ticket-not-done <ticket-name>`

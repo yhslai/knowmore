@@ -1,6 +1,6 @@
 ---
 name: flush-commit
-description: Read all the uncommitted and untracked files and see if it's sensible to make commit
+description: Read all the uncommitted and untracked files and see if it's sensible to make commit. Triggered by `flush-commit`.
 ---
 
 # Flush Commit

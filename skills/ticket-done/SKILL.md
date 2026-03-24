@@ -1,6 +1,6 @@
 ---
 name: ticket-done
-description: Read the uncommitted files and summarize how the current ticket is done (implemented) in a h1 section at the end of the ticket file, and move the file to `{PROJECT_KNOWLEDGE_BASE}/tickets/done`. Triggerd by `ticket done <ticket-name>` or `td <ticket-name>`. `ticket undo <ticket-name>` to undone a ticket (if no name supplied then it's the ticket you just marked done.)
+description: Read the uncommitted files and summarize how the current ticket is done (implemented) in a h1 section at the end of the ticket file, and move the file to `{PROJECT_KNOWLEDGE_BASE}/tickets/done`. Triggered by `ticket-done <ticket-name>` or `td <ticket-name>`. Use `ticket-not-done <ticket-name>` to mark a ticket as not done again (if no name is supplied, use the ticket most recently marked done).
 ---
 
 # Ticket Done
