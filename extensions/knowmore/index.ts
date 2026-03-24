@@ -51,34 +51,52 @@ interface KnowmoreConfig {
 		openrouterApiKey?: string;
 		model?: string;
 	};
+	PROJECT_KNOWLEDGE_BASE?: string;
+	SHARED_KNOWLEDGE_BASE?: string;
 }
+
 
 const BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search";
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 15_000;
-const DEFAULT_DISTILLER_MODEL = "google/gemini-2.0-flash-lite-001";
+const GLOBAL_CONFIG_DEFAULT_FILE = "knowmore.config.default.json";
+const PROJECT_CONFIG_FILE = "knowmore.config.json";
 
 const searchCache = new Map<string, SearchCacheEntry>();
 const urlCache = new Map<string, UrlCacheEntry>();
 
-function getDefaultGlobalConfigPath(): string {
+function getPackageRootPath(): string {
 	const extensionFile = fileURLToPath(import.meta.url);
 	const extensionDir = path.dirname(extensionFile);
-	const packageRoot = path.resolve(extensionDir, "..", "..");
-	return path.join(packageRoot, "knowmore.config.json");
+	return path.resolve(extensionDir, "..", "..");
 }
 
-function getGlobalConfigPath(): string {
+function getDefaultGlobalConfigPath(): string {
+	return path.join(getPackageRootPath(), GLOBAL_CONFIG_DEFAULT_FILE);
+}
+
+
+function getGlobalConfigPath(): string | null {
 	const envPath = process.env.KNOWMORE_CONFIG_PATH?.trim();
-	if (envPath) return path.isAbsolute(envPath) ? envPath : path.resolve(process.cwd(), envPath);
-	return getDefaultGlobalConfigPath();
+	if (envPath) {
+		const resolved = path.isAbsolute(envPath) ? envPath : path.resolve(process.cwd(), envPath);
+		if (!fs.existsSync(resolved)) {
+			throw new Error(`KNOWMORE_CONFIG_PATH is set but file was not found at ${resolved}`);
+		}
+		return resolved;
+	}
+
+	const defaultPath = getDefaultGlobalConfigPath();
+	if (fs.existsSync(defaultPath)) return defaultPath;
+
+	return null;
 }
 
 function findNearestProjectConfigPath(cwd: string): string | null {
 	let current = path.resolve(cwd);
 	while (true) {
-		const candidate = path.join(current, "knowmore.config.json");
+		const candidate = path.join(current, PROJECT_CONFIG_FILE);
 		if (fs.existsSync(candidate)) return candidate;
 		const parent = path.dirname(current);
 		if (parent === current) return null;
@@ -123,23 +141,26 @@ function mergeConfigs(baseConfig: KnowmoreConfig, overrideConfig: KnowmoreConfig
 	};
 }
 
-function loadConfig(cwd?: string): { config: KnowmoreConfig; globalConfigPath: string; projectConfigPath: string | null } {
+function loadConfig(cwd?: string): { config: KnowmoreConfig; globalConfigPath: string | null; projectConfigPath: string | null } {
 	const globalConfigPath = getGlobalConfigPath();
-	if (!fs.existsSync(globalConfigPath)) {
+	const projectConfigPath = cwd ? findNearestProjectConfigPath(cwd) : null;
+
+	if (!globalConfigPath && !projectConfigPath) {
 		throw new Error(
-			`Global Knowmore config file not found at ${globalConfigPath}. Create it from knowmore.config.example.json and set web.braveApiKey + distiller settings.`,
+			`No Knowmore config file found. Create ${GLOBAL_CONFIG_DEFAULT_FILE} from knowmore.config.example.json, or add ${PROJECT_CONFIG_FILE} in your project.`,
 		);
 	}
 
-	let config = readConfigFile(globalConfigPath);
-	let projectConfigPath: string | null = null;
+	let config: KnowmoreConfig = {};
 
-	if (cwd) {
-		projectConfigPath = findNearestProjectConfigPath(cwd);
-		if (projectConfigPath && path.resolve(projectConfigPath) !== path.resolve(globalConfigPath)) {
-			const projectConfig = readConfigFile(projectConfigPath);
-			config = mergeConfigs(config, projectConfig);
-		}
+	if (globalConfigPath) {
+		const globalConfig = readConfigFile(globalConfigPath);
+		config = mergeConfigs(config, globalConfig);
+	}
+
+	if (projectConfigPath && (!globalConfigPath || path.resolve(projectConfigPath) !== path.resolve(globalConfigPath))) {
+		const projectConfig = readConfigFile(projectConfigPath);
+		config = mergeConfigs(config, projectConfig);
 	}
 
 	return { config, globalConfigPath, projectConfigPath };
@@ -148,7 +169,7 @@ function loadConfig(cwd?: string): { config: KnowmoreConfig; globalConfigPath: s
 function requireBraveApiKey(config: KnowmoreConfig): string {
 	const apiKey = config.web?.braveApiKey;
 	if (!apiKey || apiKey.trim().length === 0) {
-		throw new Error("web.braveApiKey is missing in knowmore.config.json.");
+		throw new Error("web.braveApiKey is missing in effective Knowmore config.");
 	}
 	return apiKey;
 }
@@ -156,12 +177,12 @@ function requireBraveApiKey(config: KnowmoreConfig): string {
 function requireDistillerSettings(config: KnowmoreConfig): DistillerSettings {
 	const openrouterApiKey = config.distiller?.openrouterApiKey;
 	if (!openrouterApiKey || openrouterApiKey.trim().length === 0) {
-		throw new Error("distiller.openrouterApiKey is missing in knowmore.config.json.");
+		throw new Error("distiller.openrouterApiKey is missing in effective Knowmore config.");
 	}
 
-	const model = config.distiller?.model ?? DEFAULT_DISTILLER_MODEL;
+	const model = config.distiller?.model;
 	if (!model || model.trim().length === 0) {
-		throw new Error("distiller.model is missing in knowmore.config.json.");
+		throw new Error("distiller.model is missing in effective Knowmore config.");
 	}
 
 	return { openrouterApiKey, model };
@@ -446,6 +467,7 @@ async function runDistillerModel(
 	throw new Error("OpenRouter distiller returned empty content.");
 }
 
+// noinspection JSUnusedGlobalSymbols
 export default function knowmoreExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "km_search_web",
@@ -663,13 +685,22 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 				});
 			};
 
-			let loaded: { config: KnowmoreConfig; globalConfigPath: string; projectConfigPath: string | null };
+			let loaded: { config: KnowmoreConfig; globalConfigPath: string | null; projectConfigPath: string | null };
 			try {
 				loaded = loadConfig(ctx.cwd);
 			} catch (error) {
+				let globalConfig: string | null = null;
+				let globalConfigError: string | null = null;
+				try {
+					globalConfig = getGlobalConfigPath();
+				} catch (probeError) {
+					globalConfigError = probeError instanceof Error ? probeError.message : String(probeError);
+				}
+
 				emitDiagnose("km-diagnose config", {
 					cwd: ctx.cwd,
-					globalConfig: getGlobalConfigPath(),
+					globalConfig,
+					globalConfigError,
 					projectConfig: findNearestProjectConfigPath(ctx.cwd),
 					error: error instanceof Error ? error.message : String(error),
 				});
@@ -680,7 +711,7 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			const { config, globalConfigPath, projectConfigPath } = loaded;
 			const braveRaw = config.web?.braveApiKey;
 			const openrouterRaw = config.distiller?.openrouterApiKey;
-			const distillerModel = config.distiller?.model ?? DEFAULT_DISTILLER_MODEL;
+			const distillerModel = config.distiller?.model;
 
 			emitDiagnose("km-diagnose config", {
 				cwd: ctx.cwd,
@@ -741,7 +772,7 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 					},
 				});
 				ctx.ui.notify(
-					`km-diagnose FAILED | cwd: ${ctx.cwd} | globalConfig: ${globalConfigPath} | projectConfig: ${projectConfigPath ?? "(none)"} | ${error instanceof Error ? error.message : String(error)}`,
+					`km-diagnose FAILED | cwd: ${ctx.cwd} | globalConfig: ${globalConfigPath ?? "(none)"} | projectConfig: ${projectConfigPath ?? "(none)"} | ${error instanceof Error ? error.message : String(error)}`,
 					"error",
 				);
 			}

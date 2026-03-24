@@ -1,3 +1,4 @@
 node_modules/
 knowmore.config.json
+knowmore.config.default.json
 .idea/

@@ -1,44 +1,75 @@
 # knowmore
 
-Local pi package for external web knowledge retrieval.
+Local pi package for web + local knowledge retrieval.
 
 ## What it provides
 
 - `km_research_web` tool: search + fetch + distiller model compression (OpenRouter)
 - `km_search_web` tool: Brave Search web results (title, URL, snippet)
 - `km_fetch_url` tool: fetch/extract readable text from URL
+- `km_list_kb` tool: list local KB sources from config + implicit/explicit TOC (TBD)
+- `km_search_local` tool: search local KB sources with ripgrep-backed retrieval (TBD)
 - `/km-diagnose` command: verify config + Brave + distiller connectivity
 - `/km-clear-cache` command: clear in-memory retrieval caches
 
 ## Requirements
 
-Create a local config file:
+- `rg` (ripgrep) available in PATH for `km_search_local`.
+
+## Configuration
+
+### Main Configuration Files
+
+Copy the example config file to create a global default config:
 
 ```powershell
-cp knowmore.config.example.json knowmore.config.json
+cp knowmore.config.example.json knowmore.config.default.json
 ```
 
-Then edit `knowmore.config.json`:
+And edit it as needed.
+
+Alternatively, create a project-specific config file in your project folder:
+
+```powershell
+cp ${KNOWMORE_INSTALL_DIR}/knowmore.config.example.json knowmore.config.json
+```
+
+And edit it as needed. You can have global config, project-specific config, or both.
+
+#### Config loading precedence:
+
+At least one config file must exist (global or project).
+
+1) `KNOWMORE_CONFIG_PATH` (if set and must point to an existing file)
+2) package global default `knowmore.config.default.json` (if present)
+3) nearest project `knowmore.config.json` from current working directory (if present; overrides matching fields)
+
+The ones loaded later override fields from earlier ones.
+
+### Local Knowledge Base (KB)
+
+- `PROJECT_KNOWLEDGE_BASE` must be a **relative** path from the project config folder.
+- `SHARED_KNOWLEDGE_BASE` must be an **absolute** path.
+- Local KB source discovery uses:
+  - implicit TOC: top-level entries under each KB root
+  - optional explicit TOC: `kb.toc.json` in each KB root (supports pointing outside root)
+
+Optional `kb.toc.json` format:
 
 ```json
 {
-  "web": {
-    "braveApiKey": "your_brave_api_key"
-  },
-  "distiller": {
-    "openrouterApiKey": "your_openrouter_api_key",
-    "model": "google/gemini-3-flash-preview"
-  }
+  "sources": [
+    {
+      "id": "houdini-py-libs",
+      "path": "C:/Program Files/Side Effects Software/Houdini 21.0.631/houdini/python3.11libs",
+      "description": "Undocumented Houdini Python libs",
+      "tags": ["houdini", "python", "api"]
+    }
+  ]
 }
 ```
 
-Notes:
-- `knowmore.config.json` is gitignored.
-- Config precedence:
-  1) global config (this package folder, or `KNOWMORE_CONFIG_PATH`)
-  2) nearest project `knowmore.config.json` from current working directory (overrides matching fields)
-
-## Use locally with pi
+## Installation 
 
 From this `knowmore` directory:
 
@@ -55,6 +86,9 @@ pi install /absolute/path/to/knowmore
 Then in pi:
 
 - Run `/km-diagnose` first to validate your setup.
+- For local KB retrieval:
+  - call `km_list_kb`
+  - then call `km_search_local` with `sourceId` for precise scope
 - For external knowledge, call `km_research_web` first.
 - If needed, follow specific source URLs with `km_fetch_url`.
 
@@ -64,9 +98,10 @@ Then in pi:
 2. In pi, run `/reload`
 3. Re-test
 
+
 ## Notes
 
-- Fetched urls are cached in-memory. 
+- Fetched URLs are cached in-memory. 
 
 
 ## Utility skill triggers
