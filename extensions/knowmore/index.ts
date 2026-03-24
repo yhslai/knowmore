@@ -507,17 +507,17 @@ async function runDistillerModel(
 // noinspection JSUnusedGlobalSymbols
 export default function knowmoreExtension(pi: ExtensionAPI) {
 	pi.registerTool({
-		name: "km_list_kb",
-		label: "KM List KB",
+		name: "kb_list",
+		label: "KB List",
 		description: "Lists local knowledge-base roots and discovered catalog sources from config.",
 		promptSnippet: "List available local knowledge-base sources before local retrieval.",
 		promptGuidelines: [
-			"Use km_list_kb to discover what local KB sources are available in project/shared KB roots.",
+			"Use kb_list to discover what local KB sources are available in project/shared KB roots.",
 			"Prefer scoping later local retrieval to specific source IDs from this catalog.",
 		],
 		parameters: Type.Object({}),
 		renderCall(_args, theme) {
-			return new Text(`${theme.fg("toolTitle", theme.bold("km_list_kb"))}`, 0, 0);
+			return new Text(`${theme.fg("toolTitle", theme.bold("kb_list"))}`, 0, 0);
 		},
 		renderResult(result, { expanded }, theme) {
 			if (!expanded) return renderCollapsedSummary(theme, getListKbSummary(result.details));

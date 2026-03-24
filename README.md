@@ -9,8 +9,9 @@ Local pi package for web + local knowledge retrieval.
 - `km_research_web`: search + fetch + distiller model compression (OpenRouter)
 - `km_search_web`: Brave Search web results (title, URL, snippet)
 - `km_fetch_url`: fetch/extract readable text from URL
-- `km_list_kb`: list local KB sources from config + implicit/explicit catalog
-- `km_retrieve_kb`: get info from local KB sources via the retrieval layer (TBD)
+- `kb_list`: list local KB sources from config + implicit/explicit catalog
+- `kb_search`: query exact symbol or text from local KB sources and gather relevant results (TBD)
+- `kb_retrieve`: ask a question about local KB sources and gather relevant results (TBD)
 
 ### Commands:
 
@@ -96,7 +97,7 @@ Then in pi:
 
 - Run `/km-diagnose` first to validate your setup.
 - For local KB retrieval:
-  - call `km_list_kb`
+  - call `kb_list`
   - then call `km_search_local` with `sourceId` for precise scope
 - For external knowledge, call `km_research_web` first.
 - If needed, follow specific source URLs with `km_fetch_url`.
