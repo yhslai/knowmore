@@ -4,13 +4,25 @@ Local pi package for web + local knowledge retrieval.
 
 ## What it provides
 
-- `km_research_web` tool: search + fetch + distiller model compression (OpenRouter)
-- `km_search_web` tool: Brave Search web results (title, URL, snippet)
-- `km_fetch_url` tool: fetch/extract readable text from URL
-- `km_list_kb` tool: list local KB sources from config + implicit/explicit TOC (TBD)
-- `km_search_local` tool: search local KB sources with ripgrep-backed retrieval (TBD)
-- `/km-diagnose` command: verify config + Brave + distiller connectivity
-- `/km-clear-cache` command: clear in-memory retrieval caches
+### Tools:
+
+- `km_research_web`: search + fetch + distiller model compression (OpenRouter)
+- `km_search_web`: Brave Search web results (title, URL, snippet)
+- `km_fetch_url`: fetch/extract readable text from URL
+- `km_list_kb`: list local KB sources from config + implicit/explicit TOC (TBD)
+- `km_retrieve_kb`: get info from local KB sources via the retrieval layer (TBD)
+
+### Commands:
+
+- `/km-diagnose`: verify config + Brave + distiller connectivity
+- `/km-clear-cache`: clear in-memory retrieval caches
+
+### Utility Skill Trigger:
+
+- `flush-commit`: Read uncommitted files and decide if commit is sensible
+- `ticket-done`: Mark a ticket as done
+- `ticket-not-done`: Mark a ticket as not done
+
 
 ## Requirements
 
@@ -102,13 +114,3 @@ Then in pi:
 ## Notes
 
 - Fetched URLs are cached in-memory. 
-
-
-## Utility skill triggers
-
-- `flush-commit`
-  - Run: `flush-commit`
-
-- `ticket-done`
-  - Mark done: `ticket-done <ticket-name>` or `td <ticket-name>`
-  - Mark not done: `ticket-not-done <ticket-name>`
