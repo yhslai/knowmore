@@ -4,6 +4,12 @@ import { fileURLToPath } from "node:url";
 import { keyHint, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
+import {
+	buildKnowledgeBaseCatalog,
+	formatKnowledgeBaseCatalog,
+	type KnowledgeBaseCatalogResult,
+	type KnowmoreKnowledgeBaseConfig,
+} from "./kb.js";
 
 interface BraveSearchResult {
 	title: string;
@@ -43,7 +49,7 @@ interface DistillerSettings {
 	model: string;
 }
 
-interface KnowmoreConfig {
+interface KnowmoreConfig extends KnowmoreKnowledgeBaseConfig {
 	web?: {
 		braveApiKey?: string;
 	};
@@ -51,8 +57,6 @@ interface KnowmoreConfig {
 		openrouterApiKey?: string;
 		model?: string;
 	};
-	PROJECT_KNOWLEDGE_BASE?: string;
-	SHARED_KNOWLEDGE_BASE?: string;
 }
 
 
@@ -253,6 +257,39 @@ function getResearchSummary(details: any): string {
 	const errorCount = Array.isArray(details?.fetchErrors) ? details.fetchErrors.length : 0;
 	const suffix = errorCount > 0 ? `, ${errorCount} fetch error${errorCount === 1 ? "" : "s"}` : "";
 	return `Distilled \"${truncate(query, 80)}\" from ${sourceCount} source${sourceCount === 1 ? "" : "s"}${suffix}`;
+}
+
+function getListKbSummary(details: any): string {
+	const rootCount = Array.isArray(details?.roots) ? details.roots.length : 0;
+	const sourceCount = Array.isArray(details?.sources) ? details.sources.length : 0;
+	const warningCount = Array.isArray(details?.warnings) ? details.warnings.length : 0;
+	const warningSuffix = warningCount > 0 ? `, ${warningCount} warning${warningCount === 1 ? "" : "s"}` : "";
+	return `${sourceCount} KB source${sourceCount === 1 ? "" : "s"} across ${rootCount} root${rootCount === 1 ? "" : "s"}${warningSuffix}`;
+}
+
+function getMissingKbRootDirectories(catalog: KnowledgeBaseCatalogResult): string[] {
+	return catalog.roots.filter((root) => !root.exists).map((root) => `${root.id}:${root.path}`);
+}
+
+function getMissingKbSources(catalog: KnowledgeBaseCatalogResult): string[] {
+	return catalog.sources.filter((source) => !source.exists).map((source) => `${source.id}:${source.path}`);
+}
+
+function buildMissingKbReferencesError(catalog: KnowledgeBaseCatalogResult): string | null {
+	const missingRoots = getMissingKbRootDirectories(catalog);
+	const missingSources = getMissingKbSources(catalog);
+	if (missingRoots.length === 0 && missingSources.length === 0) return null;
+
+	const issues: string[] = [];
+	if (missingRoots.length > 0) issues.push(`KB root directory does not exist: ${missingRoots.join(", ")}`);
+	if (missingSources.length > 0) issues.push(`KB source path does not exist: ${missingSources.join(", ")}`);
+	return issues.join(" | ");
+}
+
+function ensureKbReferencesExist(catalog: KnowledgeBaseCatalogResult): void {
+	const error = buildMissingKbReferencesError(catalog);
+	if (!error) return;
+	throw new Error(error);
 }
 
 function getSearchCacheKey(query: string, count: number): string {
@@ -470,6 +507,38 @@ async function runDistillerModel(
 // noinspection JSUnusedGlobalSymbols
 export default function knowmoreExtension(pi: ExtensionAPI) {
 	pi.registerTool({
+		name: "km_list_kb",
+		label: "KM List KB",
+		description: "Lists local knowledge-base roots and discovered catalog sources from config.",
+		promptSnippet: "List available local knowledge-base sources before local retrieval.",
+		promptGuidelines: [
+			"Use km_list_kb to discover what local KB sources are available in project/shared KB roots.",
+			"Prefer scoping later local retrieval to specific source IDs from this catalog.",
+		],
+		parameters: Type.Object({}),
+		renderCall(_args, theme) {
+			return new Text(`${theme.fg("toolTitle", theme.bold("km_list_kb"))}`, 0, 0);
+		},
+		renderResult(result, { expanded }, theme) {
+			if (!expanded) return renderCollapsedSummary(theme, getListKbSummary(result.details));
+			return renderExpandedText(result, theme);
+		},
+		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+			const loaded = loadConfig(ctx.cwd);
+			const kbCatalog = buildKnowledgeBaseCatalog(loaded.config, {
+				globalConfigPath: loaded.globalConfigPath,
+				projectConfigPath: loaded.projectConfigPath,
+			});
+			ensureKbReferencesExist(kbCatalog);
+
+			return {
+				content: [{ type: "text", text: formatKnowledgeBaseCatalog(kbCatalog) }],
+				details: kbCatalog,
+			};
+		},
+	});
+
+	pi.registerTool({
 		name: "km_search_web",
 		label: "KM Search Web",
 		description: "Searches the web via Brave Search and returns ranked results with titles, snippets, and URLs.",
@@ -672,9 +741,38 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("km-diagnose", {
-		description: "Validate Knowmore config, Brave search, and distiller model configuration",
+		description: "Validate Knowmore config, local KB discovery, Brave search, and distiller model configuration",
 		handler: async (args, ctx) => {
 			const query = args.trim() || "brave search api";
+			const diagnoseStatusKey = "knowmore.km-diagnose";
+			const statusFrames = [".", "..", "..."];
+			let statusFrameIndex = 0;
+			let statusStage = "initializing";
+			let statusTimer: ReturnType<typeof setInterval> | null = null;
+
+			const renderDiagnoseStatus = () => {
+				const frame = statusFrames[statusFrameIndex % statusFrames.length];
+				ctx.ui.setStatus(diagnoseStatusKey, `km-diagnose: running (${statusStage}${frame})`);
+			};
+
+			const startDiagnoseStatus = (stage: string) => {
+				statusStage = stage;
+				statusFrameIndex = 0;
+				renderDiagnoseStatus();
+				if (statusTimer !== null) return;
+				statusTimer = setInterval(() => {
+					statusFrameIndex = (statusFrameIndex + 1) % statusFrames.length;
+					renderDiagnoseStatus();
+				}, 350);
+			};
+
+			const stopDiagnoseStatus = () => {
+				if (statusTimer !== null) {
+					clearInterval(statusTimer);
+					statusTimer = null;
+				}
+				ctx.ui.setStatus(diagnoseStatusKey, undefined);
+			};
 
 			const emitDiagnose = (title: string, payload: unknown) => {
 				pi.sendMessage({
@@ -712,6 +810,12 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			const braveRaw = config.web?.braveApiKey;
 			const openrouterRaw = config.distiller?.openrouterApiKey;
 			const distillerModel = config.distiller?.model;
+			const kbCatalog = buildKnowledgeBaseCatalog(config, { globalConfigPath, projectConfigPath });
+			const missingKbRoots = getMissingKbRootDirectories(kbCatalog);
+			const missingKbSources = getMissingKbSources(kbCatalog);
+			const missingKbReferencesError = buildMissingKbReferencesError(kbCatalog);
+			const kbSourceNames = kbCatalog.sources.map((source) => source.id);
+			const kbSourceNamePreview = kbSourceNames.slice(0, 50);
 
 			emitDiagnose("km-diagnose config", {
 				cwd: ctx.cwd,
@@ -722,18 +826,49 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 					openrouterApiKey: openrouterRaw ? maskApiKey(openrouterRaw) : null,
 					distillerModel,
 				},
+				kb: {
+					roots: kbCatalog.roots.map((root) => root.id),
+					sourceNames: kbSourceNamePreview,
+					sourceNameTotal: kbSourceNames.length,
+					sourceNamesTruncated: kbSourceNames.length > kbSourceNamePreview.length,
+					warningCount: kbCatalog.warnings.length,
+				},
 				checks: {
+					kbRoots: missingKbRoots.length === 0 ? "ok" : { status: "failed", missing: missingKbRoots },
+					kbSources: missingKbSources.length === 0 ? "ok" : { status: "failed", missing: missingKbSources },
 					brave: "pending",
 					distiller: "pending",
 				},
 			});
 
+			if (missingKbReferencesError) {
+				emitDiagnose("km-diagnose result", {
+					status: "failed",
+					query,
+					checks: {
+						kbRoots: missingKbRoots.length === 0 ? "ok" : { status: "failed", missing: missingKbRoots },
+						kbSources: missingKbSources.length === 0 ? "ok" : { status: "failed", missing: missingKbSources },
+						brave: "skipped",
+						distiller: "skipped",
+					},
+					error: missingKbReferencesError,
+				});
+				ctx.ui.notify(
+					`km-diagnose FAILED | cwd: ${ctx.cwd} | globalConfig: ${globalConfigPath ?? "(none)"} | projectConfig: ${projectConfigPath ?? "(none)"} | ${missingKbReferencesError}`,
+					"error",
+				);
+				return;
+			}
+
 			try {
 				const braveApiKey = requireBraveApiKey(config);
 				const distiller = requireDistillerSettings(config);
 
+				startDiagnoseStatus("checking Brave API");
 				const results = await braveWebSearch(braveApiKey, query, 1);
 				const top = results[0];
+
+				startDiagnoseStatus("checking distiller API");
 				const distillerProbe = await runDistillerModel(
 					distiller,
 					"Return exactly the word OK.",
@@ -775,6 +910,8 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 					`km-diagnose FAILED | cwd: ${ctx.cwd} | globalConfig: ${globalConfigPath ?? "(none)"} | projectConfig: ${projectConfigPath ?? "(none)"} | ${error instanceof Error ? error.message : String(error)}`,
 					"error",
 				);
+			} finally {
+				stopDiagnoseStatus();
 			}
 		},
 	});

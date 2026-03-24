@@ -9,12 +9,12 @@ Local pi package for web + local knowledge retrieval.
 - `km_research_web`: search + fetch + distiller model compression (OpenRouter)
 - `km_search_web`: Brave Search web results (title, URL, snippet)
 - `km_fetch_url`: fetch/extract readable text from URL
-- `km_list_kb`: list local KB sources from config + implicit/explicit TOC (TBD)
+- `km_list_kb`: list local KB sources from config + implicit/explicit catalog
 - `km_retrieve_kb`: get info from local KB sources via the retrieval layer (TBD)
 
 ### Commands:
 
-- `/km-diagnose`: verify config + Brave + distiller connectivity
+- `/km-diagnose`: verify config + KB discovery + Brave + distiller connectivity
 - `/km-clear-cache`: clear in-memory retrieval caches
 
 ### Utility Skill Trigger:
@@ -63,22 +63,19 @@ The ones loaded later override fields from earlier ones.
 - `PROJECT_KNOWLEDGE_BASE` must be a **relative** path from the project config folder.
 - `SHARED_KNOWLEDGE_BASE` must be an **absolute** path.
 - Local KB source discovery uses:
-  - implicit TOC: top-level entries under each KB root
-  - optional explicit TOC: `kb.toc.json` in each KB root (supports pointing outside root)
+  - implicit catalog: top-level entries under each KB root
+  - optional explicit catalog: `kb.catalog.json` in each KB root (supports pointing outside root)
 
-Optional `kb.toc.json` format:
+Optional `kb.catalog.json` format:
 
 ```json
-{
-  "sources": [
-    {
-      "id": "houdini-py-libs",
-      "path": "C:/Program Files/Side Effects Software/Houdini 21.0.631/houdini/python3.11libs",
-      "description": "Undocumented Houdini Python libs",
-      "tags": ["houdini", "python", "api"]
-    }
-  ]
-}
+[
+  {
+    "id": "houdini-py-libs",
+    "path": "C:/Program Files/Side Effects Software/Houdini 21.0.631/houdini/python3.11libs",
+    "description": "Undocumented Houdini Python libs"
+  }
+]
 ```
 
 ## Installation 
