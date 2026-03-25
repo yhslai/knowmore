@@ -175,7 +175,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS kb_chunks USING fts5(
 	file_path UNINDEXED,
 	start_line UNINDEXED,
 	end_line UNINDEXED,
-	tokenize = 'unicode61 remove_diacritics 2'
+	tokenize = 'porter unicode61 remove_diacritics 2'
 );
 
 CREATE TABLE IF NOT EXISTS kb_index_meta (
@@ -437,7 +437,7 @@ export function updateKbIndex(
 			});
 		}
 
-		setMetaValue(db, "schemaVersion", "1");
+		setMetaValue(db, "schemaVersion", "2");
 		setMetaValue(db, "lastUpdatedAt", new Date().toISOString());
 		setMetaValue(db, "lastScope", options.scope);
 		if (options.sourceIds && options.sourceIds.length > 0) {
