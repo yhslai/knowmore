@@ -691,11 +691,12 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "kb_search",
 		label: "KB Search",
-		description: "Searches local indexed knowledge-base chunks using lexical ranking (BM25).",
+		description: "Searches local indexed knowledge-base chunks. Doesn't support semantic retrieval, only lexical ranking (BM25).",
 		promptSnippet: "Search the local KB index for exact terms, symbols, and matching passages.",
 		promptGuidelines: [
-			"Use kb_search for local lexical retrieval over indexed KB sources.",
-			"Run /kb-index update when index is missing or stale.",
+            "This only matches exact words, so keep the query concise and broad.",
+            "If it doesn't find what you need, try a boarder (shorter) query or some synonyms.",
+            "If you find a chunk that's relevant but insufficient, follow up with a direct read of the source file for more context."
 		],
 		parameters: Type.Object({
 			query: Type.String({ description: "Lexical search query" }),
