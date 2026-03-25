@@ -81,6 +81,7 @@ interface KnowmoreConfig extends KnowmoreKnowledgeBaseConfig {
 
 const BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search";
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_APP_TITLE = "knowmore-distiller";
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const GLOBAL_CONFIG_DEFAULT_FILE = "knowmore.config.default.json";
@@ -231,7 +232,7 @@ function requireDistillerSettings(config: KnowmoreConfig): DistillerSettings {
 		throw new Error("distiller.model is missing in effective Knowmore config.");
 	}
 
-	return { openrouterApiKey, model };
+	return { openrouterApiKey: openrouterApiKey.trim(), model: model.trim() };
 }
 
 function maskApiKey(apiKey: string): string {
@@ -748,6 +749,9 @@ async function runDistillerModel(
 			headers: {
 				"Content-Type": "application/json",
 				Authorization: `Bearer ${settings.openrouterApiKey}`,
+                "HTTP-Referer": "http://localhost",
+				"X-OpenRouter-Title": OPENROUTER_APP_TITLE,
+                "X-OpenRouter-Categories": "cli-agent",
 			},
 			body: JSON.stringify({
 				model: settings.model,
