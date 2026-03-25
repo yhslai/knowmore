@@ -289,12 +289,27 @@ function getKbSearchSummary(details: any): string {
 	return `${resultCount} local KB match${resultCount === 1 ? "" : "es"} for \"${truncate(query, 80)}\"`;
 }
 
+function formatKbUnionClauses(allClauses: unknown, anyClauses: unknown, maxChars: number): string {
+	const all = (Array.isArray(allClauses) ? allClauses : [])
+		.filter((clause): clause is string => typeof clause === "string")
+		.map((clause) => clause.trim())
+		.filter((clause) => clause.length > 0);
+	const any = (Array.isArray(anyClauses) ? anyClauses : [])
+		.filter((clause): clause is string => typeof clause === "string")
+		.map((clause) => clause.trim())
+		.filter((clause) => clause.length > 0);
+	if (all.length === 0 && any.length === 0) return "(empty query)";
+	const allPart = all.length > 0 ? `all:[${all.map((clause) => `"${clause}"`).join(", ")}]` : "";
+	const anyPart = any.length > 0 ? `any:[${any.map((clause) => `"${clause}"`).join(", ")}]` : "";
+	const combined = [allPart, anyPart].filter(Boolean).join(" ");
+	return truncate(combined, maxChars);
+}
+
 function getKbUnionSearchSummary(details: any): string {
-	const allCount = Array.isArray(details?.all) ? details.all.length : 0;
-	const anyCount = Array.isArray(details?.any) ? details.any.length : 0;
+	const query = formatKbUnionClauses(details?.all, details?.any, 80);
 	const resultCount = Array.isArray(details?.results) ? details.results.length : 0;
 	const distilled = details?.distilled ? " (distilled)" : "";
-	return `${resultCount} KB union match${resultCount === 1 ? "" : "es"} for all=${allCount}, any=${anyCount}${distilled}`;
+	return `${resultCount} KB union match${resultCount === 1 ? "" : "es"} for ${query}${distilled}`;
 }
 
 function splitShellLikeArgs(args: string): string[] {
@@ -907,14 +922,15 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 		promptSnippet: "Run local KB OR-union retrieval with optional one-shot distillation.",
 		promptGuidelines: [
 			"Choose scope correctly: project for project-* sources, shared for shared-* sources, all for both.",
-			"If you know the exact term precisely, use kb_search instead for more precise results.",
 			"If you don't know the precise terms, you might put synonyms or related terms in any[] for broader coverage.",
+            "Most of time, leave all[] empty and use any[] for broader coverage, unless you need to ensure exact match.",
 			"Set distill=true when you want distilled context from local chunk neighborhoods. If distill=false, returns raw chunks.",
 			"Use intent when you want to guide the distiller on what to prioritize (e.g., constraints, comparison criteria, output focus).",
+            "Stop once you got enough information, no need to over research.",
 		],
 		parameters: Type.Object({
-			all: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: "Required clauses; every clause must match." }),
-			any: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Optional OR clauses; at least one matches when provided." })),
+			all: Type.Array(Type.String({ minLength: 1 }), { description: "Only return results that match all these clauses." }),
+			any: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Return results that match at least one of these clauses." })),
 			scope: Type.Optional(
 				Type.Union([Type.Literal("project"), Type.Literal("shared"), Type.Literal("all")], {
 					description: "Which index to search",
@@ -930,13 +946,12 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			maxCharsPerChunk: Type.Optional(Type.Integer({ minimum: 400, maximum: 12000, default: 5000 })),
 		}),
 		renderCall(args, theme) {
-			const all = Array.isArray(args?.all) ? args.all.length : 0;
-			const any = Array.isArray(args?.any) ? args.any.length : 0;
+			const query = formatKbUnionClauses(args?.all, args?.any, 100);
 			const topK = typeof args?.topK === "number" ? ` topK=${args.topK}` : "";
 			const scope = typeof args?.scope === "string" ? ` scope=${args.scope}` : "";
 			const distill = args?.distill ? " distill" : "";
 			const intent = typeof args?.intent === "string" && args.intent.trim().length > 0 ? " intent" : "";
-			return new Text(`${theme.fg("toolTitle", theme.bold("kb_union_search"))} ${theme.fg("accent", `all=${all}, any=${any}`)}${theme.fg("muted", `${topK}${scope}${distill}${intent}`)}`, 0, 0);
+			return new Text(`${theme.fg("toolTitle", theme.bold("kb_union_search"))} ${theme.fg("accent", query)}${theme.fg("muted", `${topK}${scope}${distill}${intent}`)}`, 0, 0);
 		},
 		renderResult(result, { expanded }, theme) {
 			if (!expanded) return renderCollapsedSummary(theme, getKbUnionSearchSummary(result.details));

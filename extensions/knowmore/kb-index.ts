@@ -722,8 +722,12 @@ function buildUnionMatchQuery(all: string[], any: string[]): string {
 	const allClauses = all.map(toFtsPhraseClause);
 	const anyClauses = any.map(toFtsPhraseClause);
 
+	if (allClauses.length === 0 && anyClauses.length === 0) {
+		throw new Error("kb_union_search requires at least one clause in all or any");
+	}
+
 	if (allClauses.length === 0) {
-		throw new Error("kb_union_search requires at least one required clause in all");
+		return anyClauses.map((clause) => `(${clause})`).join(" OR ");
 	}
 
 	const parts = allClauses.map((clause) => `(${clause})`);
@@ -819,13 +823,15 @@ export function formatKbSearchResult(result: KbSearchResult): string {
 
 export function formatKbUnionSearchResult(result: KbUnionSearchResult): string {
 	if (result.results.length === 0) {
-		const anyText = result.any.length > 0 ? ` and ANY(${result.any.join(" | ")})` : "";
-		return `No local KB matches for union search: ALL(${result.all.join(", ")})${anyText}`;
+		const allText = result.all.length > 0 ? `ALL(${result.all.join(", ")})` : "";
+		const anyText = result.any.length > 0 ? `ANY(${result.any.join(" | ")})` : "";
+		const queryText = [allText, anyText].filter(Boolean).join(" and ");
+		return `No local KB matches for union search: ${queryText}`;
 	}
 
 	const lines: string[] = [];
 	lines.push("Local KB union matches");
-	lines.push(`ALL: ${result.all.join(", ")}`);
+	if (result.all.length > 0) lines.push(`ALL: ${result.all.join(", ")}`);
 	if (result.any.length > 0) lines.push(`ANY: ${result.any.join(" | ")}`);
 	lines.push(`DB: \`${result.dbPath}\``);
 	lines.push("");
