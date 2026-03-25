@@ -28,6 +28,10 @@ Local pi package for web + local knowledge retrieval.
 - `ticket-done`: Mark a ticket as done
 - `ticket-not-done`: Mark a ticket as not done
 
+## Requirements
+
+It assumes ripgrep(`rg`) and SQLite3(`sqlite3`) are available in the PATH.
+
 ## Configuration
 
 ### Main configuration files
@@ -66,20 +70,16 @@ The ones loaded later override fields from earlier ones.
 
 Optional `kb.catalog.json` format:
 
-```json
+```json5
 [
   {
-    "localId": "houdini-py-libs",
+    "localId": "houdini-py-libs", // root-local ID, no prefix needed
     "path": "C:/Program Files/Side Effects Software/Houdini 21.0.631/houdini/python3.11libs",
     "description": "Undocumented Houdini Python libs"
   }
 ]
 ```
 
-Notes:
-- `localId` is root-local and does **not** need `project-`/`shared-` prefixes.
-- Final catalog/cache IDs are scope-prefixed automatically (for example `shared-houdini-py-libs`).
-- Legacy `id` is still accepted as an alias for `localId`.
 
 ## Installation
 
