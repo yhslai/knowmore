@@ -689,24 +689,30 @@ async function runDistillerModel(
 	query: string,
 	sources: DistillerSourceInput[],
 	signal?: AbortSignal,
+	intent?: string,
 ): Promise<string> {
 	const budget = estimateDistillerBudget(query, sources);
+	const normalizedIntent = typeof intent === "string" ? intent.trim() : "";
 	const prompt = [
 		"You are a distiller model used by a coding assistant.",
 		"Task: distill web evidence into compact, useful context for another model.",
 		"Rules:",
 		"- Focus on information relevant to the query.",
+		"- Treat intent (if provided) as the highest-priority guidance for what to extract.",
 		"- Prefer concrete facts; avoid speculation.",
 		"- If evidence is weak/conflicting, explicitly say so.",
 		"- Preserve source references inline like [S1], [S2] where appropriate.",
 		"- Do not write a final user-facing answer; write context for another model.",
 		`- Keep output around ${budget.wordLimit} words (roughly ±20%, shorter if evidence is sparse).`,
 		"",
+		normalizedIntent.length > 0 ? `Intent: ${normalizedIntent}` : undefined,
 		`Query: ${query}`,
 		"",
 		"Sources:",
 		...sources.map((s) => `S${s.index}: ${s.title}\nURL: ${s.url}\nSnippet: ${s.snippet}\nContent: ${s.content}`),
-	].join("\n");
+	]
+		.filter((line): line is string => typeof line === "string")
+		.join("\n");
 
 	const response = await fetchWithTimeout(
 		OPENROUTER_CHAT_URL,
@@ -830,8 +836,9 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 		promptSnippet: "Run local KB OR-union retrieval with optional one-shot distillation.",
 		promptGuidelines: [
             "If you know the exact term precisely, use kb_search instead for more precise results.",
-			"Use all[] for required clauses and any[] for OR clauses. You might put synonyms or related terms in any[] for broader coverage.",
+			"If you don't know the precise terms, you might put synonyms or related terms in any[] for broader coverage.",
 			"Set distill=true when you want distilled context from local chunk neighborhoods. If distill=false, returns raw chunks.",
+			"Use intent when you want to guide the distiller on what to prioritize (e.g., constraints, comparison criteria, output focus).",
 		],
 		parameters: Type.Object({
 			all: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: "Required clauses; every clause must match." }),
@@ -840,6 +847,7 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			topK: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, default: 20 })),
 			pathPrefix: Type.Optional(Type.String({ description: "Optional absolute path prefix filter" })),
 			distill: Type.Optional(Type.Boolean({ default: true, description: "If true, expand local context and distill before returning." })),
+			intent: Type.Optional(Type.String({ description: "Optional distillation intent to guide what evidence should be prioritized." })),
 			maxChunksToDistill: Type.Optional(Type.Integer({ minimum: 1, maximum: 30, default: 20 })),
 			maxCharsPerChunk: Type.Optional(Type.Integer({ minimum: 400, maximum: 12000, default: 5000 })),
 		}),
@@ -848,7 +856,8 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			const any = Array.isArray(args?.any) ? args.any.length : 0;
 			const topK = typeof args?.topK === "number" ? ` topK=${args.topK}` : "";
 			const distill = args?.distill ? " distill" : "";
-			return new Text(`${theme.fg("toolTitle", theme.bold("kb_union_search"))} ${theme.fg("accent", `all=${all}, any=${any}`)}${theme.fg("muted", `${topK}${distill}`)}`, 0, 0);
+			const intent = typeof args?.intent === "string" && args.intent.trim().length > 0 ? " intent" : "";
+			return new Text(`${theme.fg("toolTitle", theme.bold("kb_union_search"))} ${theme.fg("accent", `all=${all}, any=${any}`)}${theme.fg("muted", `${topK}${distill}${intent}`)}`, 0, 0);
 		},
 		renderResult(result, { expanded }, theme) {
 			if (!expanded) return renderCollapsedSummary(theme, getKbUnionSearchSummary(result.details));
@@ -913,20 +922,21 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			}
 
 			const distillQuery = `Local KB union search. ALL: ${result.all.join(", ")}${result.any.length > 0 ? ` | ANY: ${result.any.join(" | ")}` : ""}`;
-			const distilled = await runDistillerModel(distiller, distillQuery, sourceInputs, signal);
+			const distilled = await runDistillerModel(distiller, distillQuery, sourceInputs, signal, params.intent);
 			const sourceMap = sourceInputs.map((s) => ({ index: s.index, title: s.title, url: s.url }));
 
 			return {
 				content: [
 					{
 						type: "text",
-						text: `Distilled local KB union context\nALL: ${result.all.join(", ")}${result.any.length > 0 ? `\nANY: ${result.any.join(" | ")}` : ""}\n\n${distilled}\n\nSources:\n${sourceMap.map((s) => `[S${s.index}] ${s.title}\n${s.url}`).join("\n")}`,
+						text: `Distilled local KB union context\nALL: ${result.all.join(", ")}${result.any.length > 0 ? `\nANY: ${result.any.join(" | ")}` : ""}${typeof params.intent === "string" && params.intent.trim().length > 0 ? `\nIntent: ${params.intent.trim()}` : ""}\n\n${distilled}\n\nSources:\n${sourceMap.map((s) => `[S${s.index}] ${s.title}\n${s.url}`).join("\n")}`,
 					},
 				],
 				details: {
 					...result,
 					distilled: true,
 					distillerModel: distiller.model,
+					intent: typeof params.intent === "string" ? params.intent.trim() : undefined,
 					sourceMap,
 					readErrors,
 				},
@@ -1044,16 +1054,19 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use km_research_web first for external/recent questions to save context.",
 			"If distilled context is insufficient, follow specific sources with km_fetch_url.",
+			"Use intent to steer the distiller toward the exact decision criteria or deliverable you need.",
 		],
 		parameters: Type.Object({
 			query: Type.String({ description: "Research query" }),
+			intent: Type.Optional(Type.String({ description: "Optional distillation intent to guide what evidence should be prioritized." })),
 			count: Type.Optional(Type.Integer({ minimum: 1, maximum: 10, default: 10 })),
 			maxCharsPerUrl: Type.Optional(Type.Integer({ minimum: 1000, maximum: 60000, default: 15000 })),
 		}),
 		renderCall(args, theme) {
 			const query = typeof args?.query === "string" ? truncate(args.query, 100) : "";
 			const count = typeof args?.count === "number" ? ` count=${args.count}` : "";
-			return new Text(`${theme.fg("toolTitle", theme.bold("km_research_web"))} ${theme.fg("accent", query)}${theme.fg("muted", count)}`, 0, 0);
+			const intent = typeof args?.intent === "string" && args.intent.trim().length > 0 ? " intent" : "";
+			return new Text(`${theme.fg("toolTitle", theme.bold("km_research_web"))} ${theme.fg("accent", query)}${theme.fg("muted", `${count}${intent}`)}`, 0, 0);
 		},
 		renderResult(result, { expanded }, theme) {
 			if (!expanded) return renderCollapsedSummary(theme, getResearchSummary(result.details));
@@ -1105,6 +1118,7 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 					content: [{ type: "text", text: `No fetchable sources found for: ${query}` }],
 					details: {
 						query,
+						intent: typeof params.intent === "string" ? params.intent.trim() : undefined,
 						distillerModel: distiller.model,
 						sourceMap: [] as Array<{ index: number; title: string; url: string }>,
 						fetchErrors,
@@ -1114,18 +1128,19 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 				};
 			}
 
-			const distilled = await runDistillerModel(distiller, query, sourceInputs, signal);
+			const distilled = await runDistillerModel(distiller, query, sourceInputs, signal, params.intent);
 			const sourceMap = sourceInputs.map((s) => ({ index: s.index, title: s.title, url: s.url }));
 
 			return {
 				content: [
 					{
 						type: "text",
-						text: `Distilled web context for: ${query}\n\n${distilled}\n\nSources:\n${sourceMap.map((s) => `[S${s.index}] ${s.title}\n${s.url}`).join("\n")}`,
+						text: `Distilled web context for: ${query}${typeof params.intent === "string" && params.intent.trim().length > 0 ? `\nIntent: ${params.intent.trim()}` : ""}\n\n${distilled}\n\nSources:\n${sourceMap.map((s) => `[S${s.index}] ${s.title}\n${s.url}`).join("\n")}`,
 					},
 				],
 				details: {
 					query,
+					intent: typeof params.intent === "string" ? params.intent.trim() : undefined,
 					distillerModel: distiller.model,
 					sourceMap,
 					fetchErrors,
