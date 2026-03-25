@@ -16,6 +16,20 @@ export interface KbIndexUpdateOptions {
 	scope: KbIndexScope;
 	sourceIds?: string[];
 	reindex?: boolean;
+	onSourceStart?: (event: {
+		sourceId: string;
+		rootId: KnowledgeBaseRootId;
+		sourcePath: string;
+		sourceIndex: number;
+		totalSources: number;
+	}) => void | Promise<void>;
+	onFileProgress?: (event: {
+		sourceId: string;
+		filePath: string;
+		fileIndex: number;
+		totalFiles: number;
+		phase: "index" | "remove";
+	}) => void | Promise<void>;
 }
 
 export interface KbIndexUpdateResult {
@@ -156,6 +170,11 @@ const ALLOWED_EXTENSIONS = new Set([
 const MAX_FILE_BYTES = 2_000_000;
 const MAX_CHUNK_LINES = 60;
 const CHUNK_OVERLAP_LINES = 10;
+const YIELD_EVERY_STEPS = 25;
+
+async function yieldToEventLoop(): Promise<void> {
+	await new Promise<void>((resolve) => setImmediate(resolve));
+}
 
 export function resolveKbIndexPaths(cwd: string, projectConfigPath: string | null): KbIndexPaths {
 	const baseDir = projectConfigPath ? path.dirname(projectConfigPath) : path.resolve(cwd);
@@ -203,8 +222,23 @@ CREATE TABLE IF NOT EXISTS kb_index_meta (
 
 function pickSources(catalog: KnowledgeBaseCatalogResult, scope: KbIndexScope, sourceIds?: string[]): KnowledgeBaseSource[] {
 	const ids = new Set((sourceIds ?? []).map((v) => v.trim()).filter((v) => v.length > 0));
-	const filtered = catalog.sources.filter((source) => {
+	const scopedSources = catalog.sources.filter((source) => {
 		if (scope !== "all" && source.rootId !== scope) return false;
+		return true;
+	});
+	if (ids.size > 0) {
+		const scopedIds = new Set(scopedSources.map((source) => source.id));
+		const unknown = [...ids].filter((id) => !scopedIds.has(id)).sort((a, b) => a.localeCompare(b));
+		if (unknown.length > 0) {
+			const available = scopedSources.map((source) => source.id).sort((a, b) => a.localeCompare(b));
+			const availablePreview = available.slice(0, 20);
+			const availableSuffix = available.length > availablePreview.length ? " ..." : "";
+			throw new Error(
+				`Unknown source ID(s) for scope '${scope}': ${unknown.join(", ")}${available.length > 0 ? `\nAvailable: ${availablePreview.join(", ")}${availableSuffix}` : "\nNo sources available for this scope."}`,
+			);
+		}
+	}
+	const filtered = scopedSources.filter((source) => {
 		if (ids.size > 0 && !ids.has(source.id)) return false;
 		return true;
 	});
@@ -219,11 +253,16 @@ function shouldIndexFile(filePath: string): boolean {
 	return ALLOWED_EXTENSIONS.has(ext);
 }
 
-function listFilesRecursive(rootDir: string): string[] {
+async function listFilesRecursive(rootDir: string): Promise<string[]> {
 	const files: string[] = [];
 	const stack = [rootDir];
+	let steps = 0;
 
 	while (stack.length > 0) {
+		if (steps > 0 && steps % YIELD_EVERY_STEPS === 0) {
+			await yieldToEventLoop();
+		}
+		steps += 1;
 		const current = stack.pop()!;
 		let entries: fs.Dirent[];
 		try {
@@ -346,17 +385,27 @@ function rollback(db: DatabaseSync): void {
 	db.exec("ROLLBACK;");
 }
 
-export function updateKbIndex(
+export async function updateKbIndex(
 	dbPath: string,
 	catalog: KnowledgeBaseCatalogResult,
 	options: KbIndexUpdateOptions,
-): KbIndexUpdateResult {
+): Promise<KbIndexUpdateResult> {
 	const db = openDb(dbPath);
 	const selectedSources = pickSources(catalog, options.scope, options.sourceIds);
 	const sourceResults: KbIndexUpdateResult["sources"] = [];
 
 	try {
-		for (const source of selectedSources) {
+		for (let sourceIndex = 0; sourceIndex < selectedSources.length; sourceIndex++) {
+			const source = selectedSources[sourceIndex]!;
+			await options.onSourceStart?.({
+				sourceId: source.id,
+				rootId: source.rootId,
+				sourcePath: source.path,
+				sourceIndex: sourceIndex + 1,
+				totalSources: selectedSources.length,
+			});
+			await yieldToEventLoop();
+
 			const errors: string[] = [];
 			if (!source.exists) {
 				sourceResults.push({
@@ -374,7 +423,7 @@ export function updateKbIndex(
 				continue;
 			}
 
-			const discoveredFiles = listFilesRecursive(source.path);
+			const discoveredFiles = await listFilesRecursive(source.path);
 			const existing = getExistingFilesBySource(db, source.id);
 			const discoveredSet = new Set(discoveredFiles);
 
@@ -384,7 +433,18 @@ export function updateKbIndex(
 			let chunksWritten = 0;
 			let skippedFiles = 0;
 
-			for (const filePath of discoveredFiles) {
+			for (let fileIndex = 0; fileIndex < discoveredFiles.length; fileIndex++) {
+				const filePath = discoveredFiles[fileIndex]!;
+				await options.onFileProgress?.({
+					sourceId: source.id,
+					filePath,
+					fileIndex: fileIndex + 1,
+					totalFiles: discoveredFiles.length,
+					phase: "index",
+				});
+				if (fileIndex > 0 && fileIndex % YIELD_EVERY_STEPS === 0) {
+					await yieldToEventLoop();
+				}
 				let stat: fs.Stats;
 				try {
 					stat = fs.statSync(filePath);
@@ -422,8 +482,19 @@ export function updateKbIndex(
 				}
 			}
 
-			for (const stalePath of existing.keys()) {
-				if (discoveredSet.has(stalePath)) continue;
+			const stalePaths = [...existing.keys()].filter((stalePath) => !discoveredSet.has(stalePath));
+			for (let staleIndex = 0; staleIndex < stalePaths.length; staleIndex++) {
+				const stalePath = stalePaths[staleIndex]!;
+				await options.onFileProgress?.({
+					sourceId: source.id,
+					filePath: stalePath,
+					fileIndex: staleIndex + 1,
+					totalFiles: stalePaths.length,
+					phase: "remove",
+				});
+				if (staleIndex > 0 && staleIndex % YIELD_EVERY_STEPS === 0) {
+					await yieldToEventLoop();
+				}
 				try {
 					begin(db);
 					deleteIndexedFile(db, source.id, stalePath);

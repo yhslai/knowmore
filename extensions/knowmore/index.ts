@@ -366,6 +366,26 @@ function parseKbIndexArgs(rawArgs: string): { action: "update" | "status" | "cle
 	return { action, scope, sourceIds, reindex };
 }
 
+function validateKbIndexSourceIds(catalog: KnowledgeBaseCatalogResult, scope: KbIndexScope, sourceIds?: string[]): void {
+	const ids = (sourceIds ?? []).map((id) => id.trim()).filter((id) => id.length > 0);
+	if (ids.length === 0) return;
+
+	const scopedSources = catalog.sources.filter((source) => {
+		if (scope === "all") return true;
+		return source.rootId === scope;
+	});
+	const available = new Set(scopedSources.map((source) => source.id));
+	const unknown = ids.filter((id) => !available.has(id)).sort((a, b) => a.localeCompare(b));
+	if (unknown.length === 0) return;
+
+	const availableList = [...available].sort((a, b) => a.localeCompare(b));
+	const preview = availableList.slice(0, 20);
+	const previewSuffix = availableList.length > preview.length ? " ..." : "";
+	throw new Error(
+		`Unknown source ID(s) for scope '${scope}': ${unknown.join(", ")}${availableList.length > 0 ? `\nAvailable: ${preview.join(", ")}${previewSuffix}` : "\nNo sources available for this scope."}`,
+	);
+}
+
 function buildPromptKbSources(catalog: KnowledgeBaseCatalogResult): PromptKbSourceEntry[] {
 	const maxSourcesInPrompt = 120;
 	return catalog.sources.slice(0, maxSourcesInPrompt).map((source) => ({
@@ -804,6 +824,7 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const { context } = getOrBuildKbCatalogContext(ctx.cwd);
 			ensureKnowledgeBaseReferencesExist(context.catalog);
+			validateKbIndexSourceIds(context.catalog, "all", params.sourceIds);
 			const paths = resolveKbIndexPaths(ctx.cwd, context.loaded.projectConfigPath);
 			const result = searchKbIndex(paths.dbPath, {
 				query: params.query,
@@ -857,6 +878,7 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const { context } = getOrBuildKbCatalogContext(ctx.cwd);
 			ensureKnowledgeBaseReferencesExist(context.catalog);
+			validateKbIndexSourceIds(context.catalog, "all", params.sourceIds);
 			const paths = resolveKbIndexPaths(ctx.cwd, context.loaded.projectConfigPath);
 			const result = searchKbIndexUnion(paths.dbPath, {
 				all: params.all,
@@ -1170,6 +1192,8 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			const indexPaths = resolveKbIndexPaths(ctx.cwd, loaded.projectConfigPath);
 			const sourceIds = parsed.sourceIds.length > 0 ? parsed.sourceIds : undefined;
 
+			const kbIndexStatusKey = "knowmore.kb-index";
+
 			try {
 				if (parsed.action === "status") {
 					const status = getKbIndexStatus(indexPaths.dbPath);
@@ -1184,6 +1208,13 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 				}
 
 				if (parsed.action === "clear") {
+					if (sourceIds && sourceIds.length > 0) {
+						const kbCatalogForValidation = buildKnowledgeBaseCatalog(loaded.config, {
+							globalConfigPath: loaded.globalConfigPath,
+							projectConfigPath: loaded.projectConfigPath,
+						});
+						validateKbIndexSourceIds(kbCatalogForValidation, parsed.scope, sourceIds);
+					}
 					const cleared = clearKbIndex(indexPaths.dbPath, parsed.scope, sourceIds);
 					const clearedSummary =
 						cleared.clearedSources.length === 0
@@ -1206,10 +1237,28 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 					projectConfigPath: loaded.projectConfigPath,
 				});
 				ensureKnowledgeBaseReferencesExist(kbCatalog);
-				const updated = updateKbIndex(indexPaths.dbPath, kbCatalog, {
+				validateKbIndexSourceIds(kbCatalog, parsed.scope, sourceIds);
+
+				ctx.ui.setStatus(kbIndexStatusKey, "kb-index: preparing sources...");
+				const updated = await updateKbIndex(indexPaths.dbPath, kbCatalog, {
 					scope: parsed.scope,
 					sourceIds,
 					reindex: parsed.reindex,
+					onSourceStart: (event) => {
+						pi.sendMessage({
+							customType: "kb-index-progress",
+							content: `Indexing source ${event.sourceIndex}/${event.totalSources}: \`${event.sourceId}\`\nPath: \`${event.sourcePath}\``,
+							display: true,
+							details: event,
+						});
+					},
+					onFileProgress: (event) => {
+						const action = event.phase === "remove" ? "removing" : "indexing";
+						ctx.ui.setStatus(
+							kbIndexStatusKey,
+							`kb-index: ${event.sourceId} | ${action} ${event.fileIndex}/${event.totalFiles} | ${path.basename(event.filePath)}`,
+						);
+					},
 				});
 				pi.sendMessage({
 					customType: "kb-index-update",
@@ -1220,6 +1269,8 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 				ctx.ui.notify(`kb-index OK | updated ${updated.sources.length} source(s) | ${indexPaths.dbPath}`, "info");
 			} catch (error) {
 				ctx.ui.notify(`kb-index FAILED | ${error instanceof Error ? error.message : String(error)}`, "error");
+			} finally {
+				ctx.ui.setStatus(kbIndexStatusKey, undefined);
 			}
 		},
 	});
