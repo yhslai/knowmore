@@ -68,6 +68,7 @@ interface DistillerSettings {
 }
 
 interface KnowmoreConfig extends KnowmoreKnowledgeBaseConfig {
+	KB_INDEX_DIR?: string;
 	web?: {
 		braveApiKey?: string;
 	};
@@ -825,7 +826,7 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			const { context } = getOrBuildKbCatalogContext(ctx.cwd);
 			ensureKnowledgeBaseReferencesExist(context.catalog);
 			validateKbIndexSourceIds(context.catalog, "all", params.sourceIds);
-			const paths = resolveKbIndexPaths(ctx.cwd, context.loaded.projectConfigPath);
+			const paths = resolveKbIndexPaths(ctx.cwd, context.loaded.projectConfigPath, context.loaded.config.KB_INDEX_DIR);
 			const result = searchKbIndex(paths.dbPath, {
 				query: params.query,
 				topK: params.topK ?? 8,
@@ -879,7 +880,7 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			const { context } = getOrBuildKbCatalogContext(ctx.cwd);
 			ensureKnowledgeBaseReferencesExist(context.catalog);
 			validateKbIndexSourceIds(context.catalog, "all", params.sourceIds);
-			const paths = resolveKbIndexPaths(ctx.cwd, context.loaded.projectConfigPath);
+			const paths = resolveKbIndexPaths(ctx.cwd, context.loaded.projectConfigPath, context.loaded.config.KB_INDEX_DIR);
 			const result = searchKbIndexUnion(paths.dbPath, {
 				all: params.all,
 				any: params.any,
@@ -1189,7 +1190,7 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 				return;
 			}
 
-			const indexPaths = resolveKbIndexPaths(ctx.cwd, loaded.projectConfigPath);
+			const indexPaths = resolveKbIndexPaths(ctx.cwd, loaded.projectConfigPath, loaded.config.KB_INDEX_DIR);
 			const sourceIds = parsed.sourceIds.length > 0 ? parsed.sourceIds : undefined;
 
 			const kbIndexStatusKey = "knowmore.kb-index";
@@ -1342,6 +1343,7 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			}
 
 			const { config, globalConfigPath, projectConfigPath } = loaded;
+			const kbIndexPaths = resolveKbIndexPaths(ctx.cwd, projectConfigPath, config.KB_INDEX_DIR);
 			const braveRaw = config.web?.braveApiKey;
 			const openrouterRaw = config.distiller?.openrouterApiKey;
 			const distillerModel = config.distiller?.model;
@@ -1362,6 +1364,9 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 					braveApiKey: braveRaw ? maskApiKey(braveRaw) : null,
 					openrouterApiKey: openrouterRaw ? maskApiKey(openrouterRaw) : null,
 					distillerModel,
+					kbIndexDir: config.KB_INDEX_DIR ?? null,
+					kbIndexResolvedDir: kbIndexPaths.indexDir,
+					kbIndexDbPath: kbIndexPaths.dbPath,
 				},
 				kbCache: {
 					hit: !!existingCache,

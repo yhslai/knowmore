@@ -176,9 +176,15 @@ async function yieldToEventLoop(): Promise<void> {
 	await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-export function resolveKbIndexPaths(cwd: string, projectConfigPath: string | null): KbIndexPaths {
+export function resolveKbIndexPaths(cwd: string, projectConfigPath: string | null, configuredIndexDir?: string): KbIndexPaths {
 	const baseDir = projectConfigPath ? path.dirname(projectConfigPath) : path.resolve(cwd);
-	const indexDir = path.join(baseDir, ".knowmore", "kb-index");
+	const configured = configuredIndexDir?.trim();
+	const indexDir =
+		configured && configured.length > 0
+			? path.isAbsolute(configured)
+				? path.resolve(configured)
+				: path.resolve(baseDir, configured)
+			: path.join(baseDir, ".knowmore", "kb-index");
 	const dbPath = path.join(indexDir, "kb.sqlite");
 	return { baseDir, indexDir, dbPath };
 }
@@ -527,9 +533,7 @@ export async function updateKbIndex(
 		setMetaValue(db, "schemaVersion", "2");
 		setMetaValue(db, "lastUpdatedAt", new Date().toISOString());
 		setMetaValue(db, "lastScope", options.scope);
-		if (options.sourceIds && options.sourceIds.length > 0) {
-			setMetaValue(db, "lastSourceIds", JSON.stringify(options.sourceIds));
-		}
+		db.prepare("DELETE FROM kb_index_meta WHERE key = ?;").run("lastSourceIds");
 	} finally {
 		db.close();
 	}
