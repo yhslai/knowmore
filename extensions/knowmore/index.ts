@@ -11,9 +11,20 @@ import {
 	ensureKnowledgeBaseReferencesExist,
 	getMissingKnowledgeBaseRootDirectories,
 	getMissingKnowledgeBaseSources,
-	KnowledgeBaseCatalogResult,
-	KnowmoreKnowledgeBaseConfig,
+	type KnowledgeBaseCatalogResult,
+	type KnowmoreKnowledgeBaseConfig,
 } from "./kb.js";
+import {
+	clearKbIndex,
+	formatKbIndexStatus,
+	formatKbIndexUpdateResult,
+	formatKbSearchResult,
+	getKbIndexStatus,
+	resolveKbIndexPaths,
+	searchKbIndex,
+	updateKbIndex,
+	type KbIndexScope,
+} from "./kb-index.js";
 
 interface BraveSearchResult {
 	title: string;
@@ -286,6 +297,82 @@ function getResearchSummary(details: any): string {
 	return `Distilled \"${truncate(query, 80)}\" from ${sourceCount} source${sourceCount === 1 ? "" : "s"}${suffix}`;
 }
 
+function getKbSearchSummary(details: any): string {
+	const query = typeof details?.query === "string" ? details.query : "(unknown query)";
+	const resultCount = Array.isArray(details?.results) ? details.results.length : 0;
+	return `${resultCount} local KB match${resultCount === 1 ? "" : "es"} for \"${truncate(query, 80)}\"`;
+}
+
+function splitShellLikeArgs(args: string): string[] {
+	const result: string[] = [];
+	const re = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g;
+	let match: RegExpExecArray | null;
+	while ((match = re.exec(args)) !== null) {
+		const token = match[1] ?? match[2] ?? match[3] ?? "";
+		if (token.length > 0) result.push(token.replace(/\\(["'\\])/g, "$1"));
+	}
+	return result;
+}
+
+function getKbIndexUsageText(): string {
+	return [
+		"Usage:",
+		"/kb-index update [--scope project|shared|all] [--source <sourceId>] [--reindex]",
+		"/kb-index status",
+		"/kb-index clear [--scope project|shared|all] [--source <sourceId>]",
+		"",
+		"Notes:",
+		"- --source can be repeated",
+		"- --all is shorthand for --scope all",
+	].join("\n");
+}
+
+function parseKbIndexArgs(rawArgs: string): { action: "update" | "status" | "clear"; scope: KbIndexScope; sourceIds: string[]; reindex: boolean } {
+	const tokens = splitShellLikeArgs(rawArgs.trim());
+	if (tokens.length === 0) throw new Error(getKbIndexUsageText());
+
+	const actionToken = tokens[0];
+	if (actionToken !== "update" && actionToken !== "status" && actionToken !== "clear") {
+		throw new Error(`Unknown action: ${actionToken}\n\n${getKbIndexUsageText()}`);
+	}
+	const action = actionToken;
+	const startIndex = 1;
+
+	let scope: KbIndexScope = "project";
+	let reindex = false;
+	const sourceIds: string[] = [];
+
+	for (let i = startIndex; i < tokens.length; i++) {
+		const token = tokens[i];
+		if (token === "--scope") {
+			const next = tokens[i + 1];
+			if (next !== "project" && next !== "shared" && next !== "all") {
+				throw new Error("--scope must be one of: project, shared, all");
+			}
+			scope = next;
+			i += 1;
+			continue;
+		}
+		if (token === "--all") {
+			scope = "all";
+			continue;
+		}
+		if (token === "--source") {
+			const next = tokens[i + 1];
+			if (!next) throw new Error("--source requires a source ID");
+			sourceIds.push(next);
+			i += 1;
+			continue;
+		}
+		if (token === "--reindex") {
+			reindex = true;
+			continue;
+		}
+		throw new Error(`Unknown argument: ${token}\n\n${getKbIndexUsageText()}`);
+	}
+
+	return { action, scope, sourceIds, reindex };
+}
 
 function buildPromptKbSources(catalog: KnowledgeBaseCatalogResult): PromptKbSourceEntry[] {
 	const maxSourcesInPrompt = 120;
@@ -602,6 +689,48 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 
 
 	pi.registerTool({
+		name: "kb_search",
+		label: "KB Search",
+		description: "Searches local indexed knowledge-base chunks using lexical ranking (BM25).",
+		promptSnippet: "Search the local KB index for exact terms, symbols, and matching passages.",
+		promptGuidelines: [
+			"Use kb_search for local lexical retrieval over indexed KB sources.",
+			"Run /kb-index update when index is missing or stale.",
+		],
+		parameters: Type.Object({
+			query: Type.String({ description: "Lexical search query" }),
+			sourceIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Optional source IDs to scope search" })),
+			topK: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, default: 8 })),
+			pathPrefix: Type.Optional(Type.String({ description: "Optional absolute path prefix filter" })),
+		}),
+		renderCall(args, theme) {
+			const query = typeof args?.query === "string" ? truncate(args.query, 100) : "";
+			const topK = typeof args?.topK === "number" ? ` topK=${args.topK}` : "";
+			return new Text(`${theme.fg("toolTitle", theme.bold("kb_search"))} ${theme.fg("accent", query)}${theme.fg("muted", topK)}`, 0, 0);
+		},
+		renderResult(result, { expanded }, theme) {
+			if (!expanded) return renderCollapsedSummary(theme, getKbSearchSummary(result.details));
+			return renderExpandedText(result, theme);
+		},
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const { context } = getOrBuildKbCatalogContext(ctx.cwd);
+			ensureKnowledgeBaseReferencesExist(context.catalog);
+			const paths = resolveKbIndexPaths(ctx.cwd, context.loaded.projectConfigPath);
+			const result = searchKbIndex(paths.dbPath, {
+				query: params.query,
+				topK: params.topK ?? 8,
+				sourceIds: params.sourceIds,
+				pathPrefix: params.pathPrefix,
+			});
+
+			return {
+				content: [{ type: "text", text: formatKbSearchResult(result) }],
+				details: result,
+			};
+		},
+	});
+
+	pi.registerTool({
 		name: "km_search_web",
 		label: "KM Search Web",
 		description: "Searches the web via Brave Search and returns ranked results with titles, snippets, and URLs.",
@@ -800,6 +929,89 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 					results: searchResults,
 				},
 			};
+		},
+	});
+
+	pi.registerCommand("kb-index", {
+		description: "Manage local KB index. Usage: /kb-index <update|status|clear> [--scope project|shared|all] [--source <id>] [--reindex]",
+		handler: async (args, ctx) => {
+			let parsed: { action: "update" | "status" | "clear"; scope: KbIndexScope; sourceIds: string[]; reindex: boolean };
+			try {
+				parsed = parseKbIndexArgs(args);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				pi.sendMessage({
+					customType: "kb-index-usage",
+					content: message,
+					display: true,
+					details: { args, error: message },
+				});
+				ctx.ui.notify("kb-index usage shown", "info");
+				return;
+			}
+
+			let loaded: { config: KnowmoreConfig; globalConfigPath: string | null; projectConfigPath: string | null };
+			try {
+				loaded = loadConfig(ctx.cwd);
+			} catch (error) {
+				ctx.ui.notify(`kb-index FAILED | ${error instanceof Error ? error.message : String(error)}`, "error");
+				return;
+			}
+
+			const indexPaths = resolveKbIndexPaths(ctx.cwd, loaded.projectConfigPath);
+			const sourceIds = parsed.sourceIds.length > 0 ? parsed.sourceIds : undefined;
+
+			try {
+				if (parsed.action === "status") {
+					const status = getKbIndexStatus(indexPaths.dbPath);
+					pi.sendMessage({
+						customType: "kb-index-status",
+						content: formatKbIndexStatus(status),
+						display: true,
+						details: status,
+					});
+					ctx.ui.notify(`kb-index OK | status | ${indexPaths.dbPath}`, "info");
+					return;
+				}
+
+				if (parsed.action === "clear") {
+					const cleared = clearKbIndex(indexPaths.dbPath, parsed.scope, sourceIds);
+					const clearedSummary =
+						cleared.clearedSources.length === 0
+							? "none"
+							: cleared.clearedSources[0] === "*"
+								? "all"
+								: `${cleared.clearedSources.length} source(s)`;
+					pi.sendMessage({
+						customType: "kb-index-clear",
+						content: `KB index cleared (${clearedSummary})\nDB: \`${cleared.dbPath}\``,
+						display: true,
+						details: cleared,
+					});
+					ctx.ui.notify(`kb-index OK | clear | ${clearedSummary}`, "info");
+					return;
+				}
+
+				const kbCatalog = buildKnowledgeBaseCatalog(loaded.config, {
+					globalConfigPath: loaded.globalConfigPath,
+					projectConfigPath: loaded.projectConfigPath,
+				});
+				ensureKnowledgeBaseReferencesExist(kbCatalog);
+				const updated = updateKbIndex(indexPaths.dbPath, kbCatalog, {
+					scope: parsed.scope,
+					sourceIds,
+					reindex: parsed.reindex,
+				});
+				pi.sendMessage({
+					customType: "kb-index-update",
+					content: formatKbIndexUpdateResult(updated),
+					display: true,
+					details: updated,
+				});
+				ctx.ui.notify(`kb-index OK | updated ${updated.sources.length} source(s) | ${indexPaths.dbPath}`, "info");
+			} catch (error) {
+				ctx.ui.notify(`kb-index FAILED | ${error instanceof Error ? error.message : String(error)}`, "error");
+			}
 		},
 	});
 

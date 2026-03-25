@@ -16,7 +16,7 @@ Local pi package for web + local knowledge retrieval.
 ### Commands
 
 - `/kb-index`: manage local KB index (`update | status | clear`)
-  - defaults to `status`
+  - requires an explicit action (`update`, `status`, or `clear`)
   - `update` builds automatically if index does not exist
   - supports `--scope project|shared|all`, `--all`, and repeated `--source <sourceId>`
 - `/km-diagnose`: verify config + KB discovery + Brave + distiller connectivity
@@ -113,4 +113,4 @@ Then in pi:
 ## Notes
 
 - Fetched URLs are cached in-memory.
-- KB index is stored at `.knowmore/kb.index.sqlite` near the active project config (or global config if no project config is found).
+- KB index is stored at `.knowmore/kb-index/kb.sqlite` near the active project config (or current working directory if no project config is found).
