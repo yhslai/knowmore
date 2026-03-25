@@ -21,7 +21,6 @@ Use this skill when:
 3. If you started with `km_research_web`, use `km_fetch_url` on top source URL(s) ONLY IF the distilled output is insufficient.
 4. Answer in the best format for the user request (not always bullet points).
 5. Keep source links available; share them when helpful or requested.
-6. If results are weak, refine query and try again (switch tools if helpful).
 
 ## Notes
 
