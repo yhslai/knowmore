@@ -42,6 +42,14 @@ export interface KbSearchOptions {
 	pathPrefix?: string;
 }
 
+export interface KbUnionSearchOptions {
+	all: string[];
+	any?: string[];
+	topK: number;
+	sourceIds?: string[];
+	pathPrefix?: string;
+}
+
 export interface KbSearchResultItem {
 	sourceId: string;
 	filePath: string;
@@ -56,6 +64,12 @@ export interface KbSearchResult {
 	query: string;
 	topK: number;
 	results: KbSearchResultItem[];
+}
+
+export interface KbUnionSearchResult extends KbSearchResult {
+	all: string[];
+	any: string[];
+	matchQuery: string;
 }
 
 interface IndexedFileRow {
@@ -526,30 +540,32 @@ export function clearKbIndex(dbPath: string, scope: KbIndexScope, sourceIds?: st
 	}
 }
 
-export function searchKbIndex(dbPath: string, options: KbSearchOptions): KbSearchResult {
+function searchKbIndexWithMatchQuery(
+	dbPath: string,
+	query: string,
+	topK: number,
+	sourceIds?: string[],
+	pathPrefix?: string,
+): KbSearchResult {
 	if (!fs.existsSync(dbPath)) {
 		throw new Error(`KB index not found at ${dbPath}. Run /kb-index update first.`);
 	}
 
 	const db = openDb(dbPath);
 	try {
-		const query = options.query.trim();
-		if (query.length === 0) throw new Error("query must not be empty");
-		const topK = Math.max(1, Math.min(50, Math.trunc(options.topK || 8)));
-
 		const whereParts: string[] = ["kb_chunks MATCH ?"];
 		const params: Array<string | number> = [query];
 
-		const sourceIds = (options.sourceIds ?? []).map((id) => id.trim()).filter((id) => id.length > 0);
-		if (sourceIds.length > 0) {
-			whereParts.push(`source_id IN (${sourceIds.map(() => "?").join(",")})`);
-			params.push(...sourceIds);
+		const scopedSourceIds = (sourceIds ?? []).map((id) => id.trim()).filter((id) => id.length > 0);
+		if (scopedSourceIds.length > 0) {
+			whereParts.push(`source_id IN (${scopedSourceIds.map(() => "?").join(",")})`);
+			params.push(...scopedSourceIds);
 		}
 
-		const pathPrefix = options.pathPrefix?.trim();
-		if (pathPrefix) {
+		const trimmedPathPrefix = pathPrefix?.trim();
+		if (trimmedPathPrefix) {
 			whereParts.push("file_path LIKE ?");
-			params.push(`${pathPrefix}%`);
+			params.push(`${trimmedPathPrefix}%`);
 		}
 
 		params.push(topK);
@@ -591,6 +607,49 @@ LIMIT ?;`;
 	} finally {
 		db.close();
 	}
+}
+
+function toFtsPhraseClause(value: string): string {
+	const trimmed = value.trim();
+	if (trimmed.length === 0) throw new Error("search clauses must not be empty");
+	const escaped = trimmed.replace(/"/g, '""');
+	return `"${escaped}"`;
+}
+
+function buildUnionMatchQuery(all: string[], any: string[]): string {
+	const allClauses = all.map(toFtsPhraseClause);
+	const anyClauses = any.map(toFtsPhraseClause);
+
+	if (allClauses.length === 0) {
+		throw new Error("kb_union_search requires at least one required clause in all");
+	}
+
+	const parts = allClauses.map((clause) => `(${clause})`);
+	if (anyClauses.length > 0) {
+		parts.push(`(${anyClauses.map((clause) => `(${clause})`).join(" OR ")})`);
+	}
+	return parts.join(" AND ");
+}
+
+export function searchKbIndex(dbPath: string, options: KbSearchOptions): KbSearchResult {
+	const query = options.query.trim();
+	if (query.length === 0) throw new Error("query must not be empty");
+	const topK = Math.max(1, Math.min(50, Math.trunc(options.topK || 8)));
+	return searchKbIndexWithMatchQuery(dbPath, query, topK, options.sourceIds, options.pathPrefix);
+}
+
+export function searchKbIndexUnion(dbPath: string, options: KbUnionSearchOptions): KbUnionSearchResult {
+	const all = (options.all ?? []).map((s) => s.trim()).filter((s) => s.length > 0);
+	const any = (options.any ?? []).map((s) => s.trim()).filter((s) => s.length > 0);
+	const topK = Math.max(1, Math.min(100, Math.trunc(options.topK || 20)));
+	const matchQuery = buildUnionMatchQuery(all, any);
+	const result = searchKbIndexWithMatchQuery(dbPath, matchQuery, topK, options.sourceIds, options.pathPrefix);
+	return {
+		...result,
+		all,
+		any,
+		matchQuery,
+	};
 }
 
 export function formatKbIndexUpdateResult(result: KbIndexUpdateResult): string {
@@ -644,6 +703,28 @@ export function formatKbSearchResult(result: KbSearchResult): string {
 	}
 	const lines: string[] = [];
 	lines.push(`Local KB matches for: ${result.query}`);
+	lines.push(`DB: \`${result.dbPath}\``);
+	lines.push("");
+	for (let i = 0; i < result.results.length; i++) {
+		const item = result.results[i];
+		const snippet = item.text.length > 700 ? `${item.text.slice(0, 699)}…` : item.text;
+		lines.push(`${i + 1}. [${item.sourceId}] ${item.filePath}:${item.startLine}-${item.endLine} score=${item.score.toFixed(4)}`);
+		lines.push(snippet);
+		lines.push("");
+	}
+	return lines.join("\n").trimEnd();
+}
+
+export function formatKbUnionSearchResult(result: KbUnionSearchResult): string {
+	if (result.results.length === 0) {
+		const anyText = result.any.length > 0 ? ` and ANY(${result.any.join(" | ")})` : "";
+		return `No local KB matches for union search: ALL(${result.all.join(", ")})${anyText}`;
+	}
+
+	const lines: string[] = [];
+	lines.push("Local KB union matches");
+	lines.push(`ALL: ${result.all.join(", ")}`);
+	if (result.any.length > 0) lines.push(`ANY: ${result.any.join(" | ")}`);
 	lines.push(`DB: \`${result.dbPath}\``);
 	lines.push("");
 	for (let i = 0; i < result.results.length; i++) {

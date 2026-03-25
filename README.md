@@ -10,6 +10,7 @@ Local pi package for web + local knowledge retrieval.
 - `km_search_web`: Brave Search web results (title, URL, snippet)
 - `km_fetch_url`: fetch/extract readable text from URL
 - `kb_search`: lexical local KB search over a persistent on-disk index (SQLite FTS5/BM25)
+- `kb_union_search`: structured `all[]` + `any[]` local KB search (OR/union), with optional one-shot local context distillation
   - local KB source catalog is auto-injected into the system prompt in `before_agent_start`
 - `kb_retrieve`: semantic/hybrid retrieval (planned)
 
@@ -100,7 +101,7 @@ Then in pi:
 - Run `/km-diagnose` first to validate setup.
 - For local KB retrieval:
   - run `/kb-index update --scope project` (or `--all`)
-  - call `kb_search` (prefer passing `sourceIds` from the injected KB catalog)
+  - call `kb_search` or `kb_union_search` (prefer passing `sourceIds` from the injected KB catalog)
 - For external knowledge, call `km_research_web` first.
 - If needed, follow specific source URLs with `km_fetch_url`.
 

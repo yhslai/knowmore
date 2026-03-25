@@ -19,9 +19,11 @@ import {
 	formatKbIndexStatus,
 	formatKbIndexUpdateResult,
 	formatKbSearchResult,
+	formatKbUnionSearchResult,
 	getKbIndexStatus,
 	resolveKbIndexPaths,
 	searchKbIndex,
+	searchKbIndexUnion,
 	updateKbIndex,
 	type KbIndexScope,
 } from "./kb-index.js";
@@ -303,6 +305,14 @@ function getKbSearchSummary(details: any): string {
 	return `${resultCount} local KB match${resultCount === 1 ? "" : "es"} for \"${truncate(query, 80)}\"`;
 }
 
+function getKbUnionSearchSummary(details: any): string {
+	const allCount = Array.isArray(details?.all) ? details.all.length : 0;
+	const anyCount = Array.isArray(details?.any) ? details.any.length : 0;
+	const resultCount = Array.isArray(details?.results) ? details.results.length : 0;
+	const distilled = details?.distilled ? " (distilled)" : "";
+	return `${resultCount} KB union match${resultCount === 1 ? "" : "es"} for all=${allCount}, any=${anyCount}${distilled}`;
+}
+
 function splitShellLikeArgs(args: string): string[] {
 	const result: string[] = [];
 	const re = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g;
@@ -400,7 +410,7 @@ function buildKbCatalogPromptInjection(promptSources: PromptKbSourceEntry[], tot
 		}
 	}
 
-	lines.push("Use these source IDs directly with kb_search.sourceIds or /kb-index --source.");
+	lines.push("Use these source IDs directly with kb_search.sourceIds, kb_union_search.sourceIds, or /kb-index --source.");
 	lines.push(KB_CATALOG_PROMPT_END);
 	return lines.join("\n");
 }
@@ -572,6 +582,86 @@ async function fetchUrlContent(url: string, maxChars: number, signal?: AbortSign
 	};
 }
 
+function readLocalChunkContext(
+	filePath: string,
+	startLine: number,
+	endLine: number,
+	maxChars: number,
+): { content: string; rangeStart: number; rangeEnd: number; error?: string } {
+	try {
+		const raw = fs.readFileSync(filePath, "utf-8");
+		const lines = raw.split(/\r?\n/);
+		if (lines.length === 0) {
+			return { content: "", rangeStart: 1, rangeEnd: 1 };
+		}
+
+		const fileStart = 1;
+		const fileEnd = lines.length;
+		let rangeStart = Math.max(fileStart, Math.min(fileEnd, startLine));
+		let rangeEnd = Math.max(fileStart, Math.min(fileEnd, endLine));
+		if (rangeStart > rangeEnd) [rangeStart, rangeEnd] = [rangeEnd, rangeStart];
+
+		const lineWithNumber = (lineNumber: number): string => `${lineNumber}: ${lines[lineNumber - 1] ?? ""}`;
+		const joinedLength = (parts: string[]): number => {
+			if (parts.length === 0) return 0;
+			return parts.reduce((sum, p) => sum + p.length, 0) + (parts.length - 1);
+		};
+
+		let selected = Array.from({ length: rangeEnd - rangeStart + 1 }, (_, i) => lineWithNumber(rangeStart + i));
+		let totalChars = joinedLength(selected);
+
+		if (totalChars > maxChars) {
+			return {
+				content: truncate(selected.join("\n"), maxChars),
+				rangeStart,
+				rangeEnd,
+			};
+		}
+
+		while (true) {
+			let expanded = false;
+
+			if (rangeStart > fileStart) {
+				const candidate = lineWithNumber(rangeStart - 1);
+				const projected = totalChars + (selected.length > 0 ? 1 : 0) + candidate.length;
+				if (projected <= maxChars) {
+					rangeStart -= 1;
+					selected.unshift(candidate);
+					totalChars = projected;
+					expanded = true;
+				}
+			}
+
+			if (rangeEnd < fileEnd) {
+				const candidate = lineWithNumber(rangeEnd + 1);
+				const projected = totalChars + (selected.length > 0 ? 1 : 0) + candidate.length;
+				if (projected <= maxChars) {
+					rangeEnd += 1;
+					selected.push(candidate);
+					totalChars = projected;
+					expanded = true;
+				}
+			}
+
+			if (!expanded) break;
+			if (rangeStart === fileStart && rangeEnd === fileEnd) break;
+		}
+
+		return {
+			content: selected.join("\n"),
+			rangeStart,
+			rangeEnd,
+		};
+	} catch (error) {
+		return {
+			content: "",
+			rangeStart: startLine,
+			rangeEnd: endLine,
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
+}
+
 interface DistillerSourceInput {
 	index: number;
 	title: string;
@@ -695,7 +785,8 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 		promptSnippet: "Search the local KB index for exact terms, symbols, and matching passages.",
 		promptGuidelines: [
             "This only matches exact words, so keep the query concise and broad.",
-            "If it doesn't find what you need, try a boarder (shorter) query or some synonyms.",
+            "Unless you know the exact term precisely, use kb_union_search with a broader query instead might be a good idea.",
+            "If it doesn't find what you need, try a broader (shorter) query or some synonyms or try kb_union_search instead.",
             "If you find a chunk that's relevant but insufficient, follow up with a direct read of the source file for more context."
 		],
 		parameters: Type.Object({
@@ -727,6 +818,118 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			return {
 				content: [{ type: "text", text: formatKbSearchResult(result) }],
 				details: result,
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "kb_union_search",
+		label: "KB Union Search",
+		description:
+			"Searches local indexed KB chunks using structured ALL + ANY query. Optionally distills expanded local file contexts in one call.",
+		promptSnippet: "Run local KB OR-union retrieval with optional one-shot distillation.",
+		promptGuidelines: [
+            "If you know the exact term precisely, use kb_search instead for more precise results.",
+			"Use all[] for required clauses and any[] for OR clauses. You might put synonyms or related terms in any[] for broader coverage.",
+			"Set distill=true when you want distilled context from local chunk neighborhoods. If distill=false, returns raw chunks.",
+		],
+		parameters: Type.Object({
+			all: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: "Required clauses; every clause must match." }),
+			any: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Optional OR clauses; at least one matches when provided." })),
+			sourceIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Optional source IDs to scope search" })),
+			topK: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, default: 20 })),
+			pathPrefix: Type.Optional(Type.String({ description: "Optional absolute path prefix filter" })),
+			distill: Type.Optional(Type.Boolean({ default: true, description: "If true, expand local context and distill before returning." })),
+			maxChunksToDistill: Type.Optional(Type.Integer({ minimum: 1, maximum: 30, default: 20 })),
+			maxCharsPerChunk: Type.Optional(Type.Integer({ minimum: 400, maximum: 12000, default: 5000 })),
+		}),
+		renderCall(args, theme) {
+			const all = Array.isArray(args?.all) ? args.all.length : 0;
+			const any = Array.isArray(args?.any) ? args.any.length : 0;
+			const topK = typeof args?.topK === "number" ? ` topK=${args.topK}` : "";
+			const distill = args?.distill ? " distill" : "";
+			return new Text(`${theme.fg("toolTitle", theme.bold("kb_union_search"))} ${theme.fg("accent", `all=${all}, any=${any}`)}${theme.fg("muted", `${topK}${distill}`)}`, 0, 0);
+		},
+		renderResult(result, { expanded }, theme) {
+			if (!expanded) return renderCollapsedSummary(theme, getKbUnionSearchSummary(result.details));
+			return renderExpandedText(result, theme);
+		},
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const { context } = getOrBuildKbCatalogContext(ctx.cwd);
+			ensureKnowledgeBaseReferencesExist(context.catalog);
+			const paths = resolveKbIndexPaths(ctx.cwd, context.loaded.projectConfigPath);
+			const result = searchKbIndexUnion(paths.dbPath, {
+				all: params.all,
+				any: params.any,
+				topK: params.topK ?? 20,
+				sourceIds: params.sourceIds,
+				pathPrefix: params.pathPrefix,
+			});
+
+			if (!params.distill) {
+				return {
+					content: [{ type: "text", text: formatKbUnionSearchResult(result) }],
+					details: { ...result, distilled: false },
+				};
+			}
+
+			if (result.results.length === 0) {
+				return {
+					content: [{ type: "text", text: formatKbUnionSearchResult(result) }],
+					details: { ...result, distilled: false },
+				};
+			}
+
+			const { config } = loadConfig(ctx.cwd);
+			const distiller = requireDistillerSettings(config);
+			const maxChunksToDistill = params.maxChunksToDistill ?? 20;
+			const maxCharsPerChunk = params.maxCharsPerChunk ?? 5000;
+
+			const selected = result.results.slice(0, maxChunksToDistill);
+			const sourceInputs: DistillerSourceInput[] = [];
+			const readErrors: Array<{ filePath: string; error: string }> = [];
+
+			for (let i = 0; i < selected.length; i++) {
+				const item = selected[i];
+				const contextRead = readLocalChunkContext(
+					item.filePath,
+					item.startLine,
+					item.endLine,
+					maxCharsPerChunk,
+				);
+				if (contextRead.error) {
+					readErrors.push({ filePath: item.filePath, error: contextRead.error });
+				}
+				sourceInputs.push({
+					index: i + 1,
+					title: `[${item.sourceId}] ${path.basename(item.filePath)}:${item.startLine}-${item.endLine}`,
+					url: `file://${item.filePath}`,
+					snippet: truncate(item.text, 600),
+					content:
+						contextRead.content.length > 0
+							? `File: ${item.filePath}\nContext lines: ${contextRead.rangeStart}-${contextRead.rangeEnd}\n${contextRead.content}`
+							: `File: ${item.filePath}\nChunk lines: ${item.startLine}-${item.endLine}\n${truncate(item.text, maxCharsPerChunk)}`,
+				});
+			}
+
+			const distillQuery = `Local KB union search. ALL: ${result.all.join(", ")}${result.any.length > 0 ? ` | ANY: ${result.any.join(" | ")}` : ""}`;
+			const distilled = await runDistillerModel(distiller, distillQuery, sourceInputs, signal);
+			const sourceMap = sourceInputs.map((s) => ({ index: s.index, title: s.title, url: s.url }));
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Distilled local KB union context\nALL: ${result.all.join(", ")}${result.any.length > 0 ? `\nANY: ${result.any.join(" | ")}` : ""}\n\n${distilled}\n\nSources:\n${sourceMap.map((s) => `[S${s.index}] ${s.title}\n${s.url}`).join("\n")}`,
+					},
+				],
+				details: {
+					...result,
+					distilled: true,
+					distillerModel: distiller.model,
+					sourceMap,
+					readErrors,
+				},
 			};
 		},
 	});
