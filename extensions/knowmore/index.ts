@@ -27,6 +27,7 @@ import {
 	updateKbIndex,
 	type KbIndexScope,
 } from "./kb-index.js";
+import { looksLikeHtmlDocument, preprocessDocumentTextForDistiller } from "./content-cleaning.js";
 
 interface BraveSearchResult {
 	title: string;
@@ -235,25 +236,6 @@ function requireDistillerSettings(config: KnowmoreConfig): DistillerSettings {
 function maskApiKey(apiKey: string): string {
 	if (apiKey.length <= 8) return "***";
 	return `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}`;
-}
-
-function stripHtml(html: string): string {
-	const noScript = html
-		.replace(/<script[\s\S]*?<\/script>/gi, " ")
-		.replace(/<style[\s\S]*?<\/style>/gi, " ")
-		.replace(/<noscript[\s\S]*?<\/noscript>/gi, " ");
-	const noTags = noScript.replace(/<[^>]+>/g, " ");
-	return decodeEntities(noTags).replace(/\s+/g, " ").trim();
-}
-
-function decodeEntities(text: string): string {
-	return text
-		.replace(/&nbsp;/g, " ")
-		.replace(/&amp;/g, "&")
-		.replace(/&lt;/g, "<")
-		.replace(/&gt;/g, ">")
-		.replace(/&quot;/g, '"')
-		.replace(/&#39;/g, "'");
 }
 
 function truncate(text: string, maxChars: number): string {
@@ -571,7 +553,7 @@ async function fetchUrlContent(url: string, maxChars: number, signal?: AbortSign
 
 	const contentType = response.headers.get("content-type") ?? "";
 	const raw = await response.text();
-	const cleaned = contentType.includes("text/html") ? stripHtml(raw) : raw.replace(/\s+/g, " ").trim();
+	const cleaned = preprocessDocumentTextForDistiller(raw, { contentType });
 	const titleMatch = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
 	const title = titleMatch?.[1]?.replace(/\s+/g, " ").trim();
 
@@ -590,6 +572,15 @@ function readLocalChunkContext(
 ): { content: string; rangeStart: number; rangeEnd: number; error?: string } {
 	try {
 		const raw = fs.readFileSync(filePath, "utf-8");
+		if (looksLikeHtmlDocument(undefined, filePath)) {
+			const cleaned = preprocessDocumentTextForDistiller(raw, { filePath });
+			return {
+				content: truncate(cleaned, maxChars),
+				rangeStart: 1,
+				rangeEnd: Math.max(1, cleaned.split("\n").length),
+			};
+		}
+
 		const lines = raw.split(/\r?\n/);
 		if (lines.length === 0) {
 			return { content: "", rangeStart: 1, rangeEnd: 1 };
@@ -913,11 +904,11 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 					index: i + 1,
 					title: `[${item.sourceId}] ${path.basename(item.filePath)}:${item.startLine}-${item.endLine}`,
 					url: `file://${item.filePath}`,
-					snippet: truncate(item.text, 600),
+					snippet: truncate(preprocessDocumentTextForDistiller(item.text, { filePath: item.filePath }), 600),
 					content:
 						contextRead.content.length > 0
 							? `File: ${item.filePath}\nContext lines: ${contextRead.rangeStart}-${contextRead.rangeEnd}\n${contextRead.content}`
-							: `File: ${item.filePath}\nChunk lines: ${item.startLine}-${item.endLine}\n${truncate(item.text, maxCharsPerChunk)}`,
+							: `File: ${item.filePath}\nChunk lines: ${item.startLine}-${item.endLine}\n${truncate(preprocessDocumentTextForDistiller(item.text, { filePath: item.filePath }), maxCharsPerChunk)}`,
 				});
 			}
 
@@ -951,7 +942,6 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 		promptSnippet: "Search the web and return ranked results with source URLs.",
 		promptGuidelines: [
 			"Use km_search_web when user asks for external facts, recent changes, docs, or anything uncertain from local context.",
-			"Do not assume web facts without retrieval when confidence is low.",
 		],
 		parameters: Type.Object({
 			query: Type.String({ description: "Search query" }),
@@ -1052,8 +1042,8 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			"End-to-end web research: searches via Brave, fetches top pages, then uses a distiller model (OpenRouter) to return compact context for the main model.",
 		promptSnippet: "Research web evidence efficiently without sending full raw pages to the main model.",
 		promptGuidelines: [
-			"Use km_research_web first for external/recent questions to save context.",
 			"If distilled context is insufficient, follow specific sources with km_fetch_url.",
+            "Stop once you got enough information, no need to over research.",
 			"Use intent to steer the distiller toward the exact decision criteria or deliverable you need.",
 		],
 		parameters: Type.Object({

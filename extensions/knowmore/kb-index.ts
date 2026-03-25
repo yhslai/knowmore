@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { KnowledgeBaseCatalogResult, KnowledgeBaseRootId, KnowledgeBaseSource } from "./kb.js";
+import { preprocessDocumentTextForKb } from "./content-cleaning.js";
 
 export type KbIndexScope = "project" | "shared" | "all";
 
@@ -299,7 +300,8 @@ function indexFile(db: DatabaseSync, sourceId: string, filePath: string): { skip
 	const raw = fs.readFileSync(filePath);
 	if (isLikelyBinary(raw)) return { skipped: true, chunksWritten: 0, mtimeMs: stat.mtimeMs, sizeBytes: stat.size };
 
-	const text = raw.toString("utf-8");
+	const rawText = raw.toString("utf-8");
+	const text = preprocessDocumentTextForKb(rawText, filePath);
 	const chunks = chunkText(text);
 
 	deleteIndexedFile(db, sourceId, filePath);
