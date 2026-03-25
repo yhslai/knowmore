@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { KnowledgeBaseCatalogResult, KnowledgeBaseRootId, KnowledgeBaseSource } from "./kb.js";
@@ -6,10 +7,17 @@ import { preprocessDocumentTextForKb } from "./content-cleaning.js";
 
 export type KbIndexScope = "project" | "shared" | "all";
 
-export interface KbIndexPaths {
+export interface KbIndexPath {
+	scope: Exclude<KbIndexScope, "all">;
 	baseDir: string;
 	indexDir: string;
 	dbPath: string;
+	available: boolean;
+}
+
+export interface KbIndexPaths {
+	project: KbIndexPath;
+	shared: KbIndexPath;
 }
 
 export interface KbIndexUpdateOptions {
@@ -176,17 +184,34 @@ async function yieldToEventLoop(): Promise<void> {
 	await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-export function resolveKbIndexPaths(cwd: string, projectConfigPath: string | null, configuredIndexDir?: string): KbIndexPaths {
-	const baseDir = projectConfigPath ? path.dirname(projectConfigPath) : path.resolve(cwd);
-	const configured = configuredIndexDir?.trim();
-	const indexDir =
-		configured && configured.length > 0
-			? path.isAbsolute(configured)
-				? path.resolve(configured)
-				: path.resolve(baseDir, configured)
-			: path.join(baseDir, ".knowmore", "kb-index");
-	const dbPath = path.join(indexDir, "kb.sqlite");
-	return { baseDir, indexDir, dbPath };
+export function resolveKbIndexPaths(cwd: string, projectConfigPath: string | null): KbIndexPaths {
+	const sharedBaseDir = path.join(os.homedir(), ".pi");
+	const sharedIndexDir = path.join(sharedBaseDir, ".knowmore", "kb-index");
+
+	const projectBaseDir = projectConfigPath ? path.dirname(projectConfigPath) : path.resolve(cwd);
+	const projectAvailable = projectConfigPath !== null;
+	const projectIndexDir = path.join(projectBaseDir, ".knowmore", "kb-index");
+
+	return {
+		project: {
+			scope: "project",
+			baseDir: projectBaseDir,
+			indexDir: projectIndexDir,
+			dbPath: path.join(projectIndexDir, "kb.sqlite"),
+			available: projectAvailable,
+		},
+		shared: {
+			scope: "shared",
+			baseDir: sharedBaseDir,
+			indexDir: sharedIndexDir,
+			dbPath: path.join(sharedIndexDir, "kb.sqlite"),
+			available: true,
+		},
+	};
+}
+
+export function pickKbIndexPath(paths: KbIndexPaths, scope: Exclude<KbIndexScope, "all">): KbIndexPath {
+	return scope === "project" ? paths.project : paths.shared;
 }
 
 function ensureParentDir(filePath: string): void {

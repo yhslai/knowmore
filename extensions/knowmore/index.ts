@@ -21,6 +21,7 @@ import {
 	formatKbSearchResult,
 	formatKbUnionSearchResult,
 	getKbIndexStatus,
+	pickKbIndexPath,
 	resolveKbIndexPaths,
 	searchKbIndex,
 	searchKbIndexUnion,
@@ -68,7 +69,6 @@ interface DistillerSettings {
 }
 
 interface KnowmoreConfig extends KnowmoreKnowledgeBaseConfig {
-	KB_INDEX_DIR?: string;
 	web?: {
 		braveApiKey?: string;
 	};
@@ -331,9 +331,13 @@ function parseKbIndexArgs(rawArgs: string): { action: "update" | "status" | "cle
 	const action = actionToken;
 	const startIndex = 1;
 
-	let scope: KbIndexScope = "project";
+	let scope: KbIndexScope = action === "status" ? "all" : "project";
 	let reindex = false;
 	const sourceIds: string[] = [];
+
+	if (action === "status" && tokens.length > 1) {
+		throw new Error(`Unknown argument: ${tokens[1]}\n\n/kb-index status does not accept options and always shows all available indexes.\n\n${getKbIndexUsageText()}`);
+	}
 
 	for (let i = startIndex; i < tokens.length; i++) {
 		const token = tokens[i];
@@ -387,6 +391,16 @@ function validateKbIndexSourceIds(catalog: KnowledgeBaseCatalogResult, scope: Kb
 	);
 }
 
+function resolveScopes(scope: KbIndexScope): Array<Exclude<KbIndexScope, "all">> {
+	return scope === "all" ? ["project", "shared"] : [scope];
+}
+
+function mergeRankedResults<T extends { score: number }>(lists: T[][], topK: number): T[] {
+	const merged = lists.flat();
+	merged.sort((a, b) => a.score - b.score);
+	return merged.slice(0, Math.max(1, topK));
+}
+
 function buildPromptKbSources(catalog: KnowledgeBaseCatalogResult): PromptKbSourceEntry[] {
 	const maxSourcesInPrompt = 120;
 	return catalog.sources.slice(0, maxSourcesInPrompt).map((source) => ({
@@ -414,6 +428,7 @@ function buildKbCatalogPromptInjection(promptSources: PromptKbSourceEntry[], tot
 	}
 
 	lines.push("Use these source IDs directly with kb_search.sourceIds, kb_union_search.sourceIds, or /kb-index --source.");
+	lines.push("Set kb_search/kb_union_search scope to project/shared/all based on source IDs.");
 	lines.push(KB_CATALOG_PROMPT_END);
 	return lines.join("\n");
 }
@@ -802,13 +817,20 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 		description: "Searches local indexed knowledge-base chunks. Doesn't support semantic retrieval, only lexical ranking (BM25).",
 		promptSnippet: "Search the local KB index for exact terms, symbols, and matching passages.",
 		promptGuidelines: [
-            "This only matches exact words, so keep the query concise and broad.",
-            "Unless you know the exact term precisely, use kb_union_search with a broader query instead might be a good idea.",
-            "If it doesn't find what you need, try a broader (shorter) query or some synonyms or try kb_union_search instead.",
-            "If you find a chunk that's relevant but insufficient, follow up with a direct read of the source file for more context."
+			"This only matches exact words, so keep the query concise and broad.",
+			"Choose scope correctly: project for project-* sources, shared for shared-* sources, all for both.",
+			"Unless you know the exact term precisely, use kb_union_search with a broader query instead might be a good idea.",
+			"If it doesn't find what you need, try a broader (shorter) query or some synonyms or try kb_union_search instead.",
+			"If you find a chunk that's relevant but insufficient, follow up with a direct read of the source file for more context.",
 		],
 		parameters: Type.Object({
 			query: Type.String({ description: "Lexical search query" }),
+			scope: Type.Optional(
+				Type.Union([Type.Literal("project"), Type.Literal("shared"), Type.Literal("all")], {
+					description: "Which index to search",
+					default: "all",
+				}),
+			),
 			sourceIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Optional source IDs to scope search" })),
 			topK: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, default: 8 })),
 			pathPrefix: Type.Optional(Type.String({ description: "Optional absolute path prefix filter" })),
@@ -816,7 +838,8 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 		renderCall(args, theme) {
 			const query = typeof args?.query === "string" ? truncate(args.query, 100) : "";
 			const topK = typeof args?.topK === "number" ? ` topK=${args.topK}` : "";
-			return new Text(`${theme.fg("toolTitle", theme.bold("kb_search"))} ${theme.fg("accent", query)}${theme.fg("muted", topK)}`, 0, 0);
+			const scope = typeof args?.scope === "string" ? ` scope=${args.scope}` : "";
+			return new Text(`${theme.fg("toolTitle", theme.bold("kb_search"))} ${theme.fg("accent", query)}${theme.fg("muted", `${topK}${scope}`)}`, 0, 0);
 		},
 		renderResult(result, { expanded }, theme) {
 			if (!expanded) return renderCollapsedSummary(theme, getKbSearchSummary(result.details));
@@ -825,14 +848,45 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const { context } = getOrBuildKbCatalogContext(ctx.cwd);
 			ensureKnowledgeBaseReferencesExist(context.catalog);
-			validateKbIndexSourceIds(context.catalog, "all", params.sourceIds);
-			const paths = resolveKbIndexPaths(ctx.cwd, context.loaded.projectConfigPath, context.loaded.config.KB_INDEX_DIR);
-			const result = searchKbIndex(paths.dbPath, {
+			const scope: KbIndexScope = params.scope ?? "all";
+			validateKbIndexSourceIds(context.catalog, scope, params.sourceIds);
+			const topK = params.topK ?? 8;
+			const paths = resolveKbIndexPaths(ctx.cwd, context.loaded.projectConfigPath);
+			const targetScopes = resolveScopes(scope);
+			const searchResults: Array<ReturnType<typeof searchKbIndex>> = [];
+			const searchedDbPaths: string[] = [];
+
+			for (const targetScope of targetScopes) {
+				const indexPath = pickKbIndexPath(paths, targetScope);
+				if (targetScope === "project" && !indexPath.available) {
+					if (scope === "project") {
+						throw new Error("kb_search scope=project requires running inside a project (knowmore.config.json).");
+					}
+					continue;
+				}
+				if (!fs.existsSync(indexPath.dbPath)) continue;
+				searchedDbPaths.push(indexPath.dbPath);
+				searchResults.push(
+					searchKbIndex(indexPath.dbPath, {
+						query: params.query,
+						topK,
+						sourceIds: params.sourceIds,
+						pathPrefix: params.pathPrefix,
+					}),
+				);
+			}
+
+			if (searchResults.length === 0) {
+				const checked = targetScopes.map((s) => pickKbIndexPath(paths, s).dbPath).join(", ");
+				throw new Error(`No KB index found for scope='${scope}'. Run /kb-index update. Checked: ${checked}`);
+			}
+
+			const result = {
+				dbPath: searchedDbPaths.length === 1 ? searchedDbPaths[0]! : searchedDbPaths.join(", "),
 				query: params.query,
-				topK: params.topK ?? 8,
-				sourceIds: params.sourceIds,
-				pathPrefix: params.pathPrefix,
-			});
+				topK,
+				results: mergeRankedResults(searchResults.map((r) => r.results), topK),
+			};
 
 			return {
 				content: [{ type: "text", text: formatKbSearchResult(result) }],
@@ -848,7 +902,8 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			"Searches local indexed KB chunks using structured ALL + ANY query. Optionally distills expanded local file contexts in one call.",
 		promptSnippet: "Run local KB OR-union retrieval with optional one-shot distillation.",
 		promptGuidelines: [
-            "If you know the exact term precisely, use kb_search instead for more precise results.",
+			"Choose scope correctly: project for project-* sources, shared for shared-* sources, all for both.",
+			"If you know the exact term precisely, use kb_search instead for more precise results.",
 			"If you don't know the precise terms, you might put synonyms or related terms in any[] for broader coverage.",
 			"Set distill=true when you want distilled context from local chunk neighborhoods. If distill=false, returns raw chunks.",
 			"Use intent when you want to guide the distiller on what to prioritize (e.g., constraints, comparison criteria, output focus).",
@@ -856,6 +911,12 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 		parameters: Type.Object({
 			all: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: "Required clauses; every clause must match." }),
 			any: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Optional OR clauses; at least one matches when provided." })),
+			scope: Type.Optional(
+				Type.Union([Type.Literal("project"), Type.Literal("shared"), Type.Literal("all")], {
+					description: "Which index to search",
+					default: "all",
+				}),
+			),
 			sourceIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Optional source IDs to scope search" })),
 			topK: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, default: 20 })),
 			pathPrefix: Type.Optional(Type.String({ description: "Optional absolute path prefix filter" })),
@@ -868,9 +929,10 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			const all = Array.isArray(args?.all) ? args.all.length : 0;
 			const any = Array.isArray(args?.any) ? args.any.length : 0;
 			const topK = typeof args?.topK === "number" ? ` topK=${args.topK}` : "";
+			const scope = typeof args?.scope === "string" ? ` scope=${args.scope}` : "";
 			const distill = args?.distill ? " distill" : "";
 			const intent = typeof args?.intent === "string" && args.intent.trim().length > 0 ? " intent" : "";
-			return new Text(`${theme.fg("toolTitle", theme.bold("kb_union_search"))} ${theme.fg("accent", `all=${all}, any=${any}`)}${theme.fg("muted", `${topK}${distill}${intent}`)}`, 0, 0);
+			return new Text(`${theme.fg("toolTitle", theme.bold("kb_union_search"))} ${theme.fg("accent", `all=${all}, any=${any}`)}${theme.fg("muted", `${topK}${scope}${distill}${intent}`)}`, 0, 0);
 		},
 		renderResult(result, { expanded }, theme) {
 			if (!expanded) return renderCollapsedSummary(theme, getKbUnionSearchSummary(result.details));
@@ -879,15 +941,50 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const { context } = getOrBuildKbCatalogContext(ctx.cwd);
 			ensureKnowledgeBaseReferencesExist(context.catalog);
-			validateKbIndexSourceIds(context.catalog, "all", params.sourceIds);
-			const paths = resolveKbIndexPaths(ctx.cwd, context.loaded.projectConfigPath, context.loaded.config.KB_INDEX_DIR);
-			const result = searchKbIndexUnion(paths.dbPath, {
-				all: params.all,
-				any: params.any,
-				topK: params.topK ?? 20,
-				sourceIds: params.sourceIds,
-				pathPrefix: params.pathPrefix,
-			});
+			const scope: KbIndexScope = params.scope ?? "all";
+			validateKbIndexSourceIds(context.catalog, scope, params.sourceIds);
+			const topK = params.topK ?? 20;
+			const paths = resolveKbIndexPaths(ctx.cwd, context.loaded.projectConfigPath);
+			const targetScopes = resolveScopes(scope);
+			const searchResults: Array<ReturnType<typeof searchKbIndexUnion>> = [];
+			const searchedDbPaths: string[] = [];
+
+			for (const targetScope of targetScopes) {
+				const indexPath = pickKbIndexPath(paths, targetScope);
+				if (targetScope === "project" && !indexPath.available) {
+					if (scope === "project") {
+						throw new Error("kb_union_search scope=project requires running inside a project (knowmore.config.json).");
+					}
+					continue;
+				}
+				if (!fs.existsSync(indexPath.dbPath)) continue;
+				searchedDbPaths.push(indexPath.dbPath);
+				searchResults.push(
+					searchKbIndexUnion(indexPath.dbPath, {
+						all: params.all,
+						any: params.any,
+						topK,
+						sourceIds: params.sourceIds,
+						pathPrefix: params.pathPrefix,
+					}),
+				);
+			}
+
+			if (searchResults.length === 0) {
+				const checked = targetScopes.map((s) => pickKbIndexPath(paths, s).dbPath).join(", ");
+				throw new Error(`No KB index found for scope='${scope}'. Run /kb-index update. Checked: ${checked}`);
+			}
+
+			const first = searchResults[0]!;
+			const result = {
+				dbPath: searchedDbPaths.length === 1 ? searchedDbPaths[0]! : searchedDbPaths.join(", "),
+				query: first.query,
+				topK,
+				all: first.all,
+				any: first.any,
+				matchQuery: first.matchQuery,
+				results: mergeRankedResults(searchResults.map((r) => r.results), topK),
+			};
 
 			if (!params.distill) {
 				return {
@@ -1165,7 +1262,7 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("kb-index", {
-		description: "Manage local KB index. Usage: /kb-index <update|status|clear> [--scope project|shared|all] [--source <id>] [--reindex]",
+		description: "Manage local KB index. Usage: /kb-index update [--scope project|shared|all] [--source <id>] [--reindex] | /kb-index status | /kb-index clear [--scope project|shared|all] [--source <id>]",
 		handler: async (args, ctx) => {
 			let parsed: { action: "update" | "status" | "clear"; scope: KbIndexScope; sourceIds: string[]; reindex: boolean };
 			try {
@@ -1190,21 +1287,32 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 				return;
 			}
 
-			const indexPaths = resolveKbIndexPaths(ctx.cwd, loaded.projectConfigPath, loaded.config.KB_INDEX_DIR);
+			const indexPaths = resolveKbIndexPaths(ctx.cwd, loaded.projectConfigPath);
 			const sourceIds = parsed.sourceIds.length > 0 ? parsed.sourceIds : undefined;
 
 			const kbIndexStatusKey = "knowmore.kb-index";
 
 			try {
+				const targetScopes = resolveScopes(parsed.scope).filter((scope) => {
+					const indexPath = pickKbIndexPath(indexPaths, scope);
+					return scope !== "project" || indexPath.available;
+				});
+				if (targetScopes.length === 0) {
+					throw new Error("Project index scope requested but no project knowmore.config.json was found.");
+				}
+
 				if (parsed.action === "status") {
-					const status = getKbIndexStatus(indexPaths.dbPath);
+					const statuses = targetScopes.map((scope) => {
+						const indexPath = pickKbIndexPath(indexPaths, scope);
+						return { scope, status: getKbIndexStatus(indexPath.dbPath) };
+					});
 					pi.sendMessage({
 						customType: "kb-index-status",
-						content: formatKbIndexStatus(status),
+						content: statuses.map(({ scope, status }) => `# ${scope}\n${formatKbIndexStatus(status)}`).join("\n\n"),
 						display: true,
-						details: status,
+						details: statuses,
 					});
-					ctx.ui.notify(`kb-index OK | status | ${indexPaths.dbPath}`, "info");
+					ctx.ui.notify(`kb-index OK | status | ${targetScopes.join(", ")}`, "info");
 					return;
 				}
 
@@ -1216,20 +1324,27 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 						});
 						validateKbIndexSourceIds(kbCatalogForValidation, parsed.scope, sourceIds);
 					}
-					const cleared = clearKbIndex(indexPaths.dbPath, parsed.scope, sourceIds);
-					const clearedSummary =
-						cleared.clearedSources.length === 0
-							? "none"
-							: cleared.clearedSources[0] === "*"
-								? "all"
-								: `${cleared.clearedSources.length} source(s)`;
+					const cleared = targetScopes.map((scope) => {
+						const indexPath = pickKbIndexPath(indexPaths, scope);
+						return { scope, result: clearKbIndex(indexPath.dbPath, scope, sourceIds) };
+					});
 					pi.sendMessage({
 						customType: "kb-index-clear",
-						content: `KB index cleared (${clearedSummary})\nDB: \`${cleared.dbPath}\``,
+						content: cleared
+							.map(({ scope, result }) => {
+								const clearedSummary =
+									result.clearedSources.length === 0
+										? "none"
+										: result.clearedSources[0] === "*"
+											? "all"
+											: `${result.clearedSources.length} source(s)`;
+								return `KB index cleared (${scope}: ${clearedSummary})\nDB: \`${result.dbPath}\``;
+							})
+							.join("\n\n"),
 						display: true,
 						details: cleared,
 					});
-					ctx.ui.notify(`kb-index OK | clear | ${clearedSummary}`, "info");
+					ctx.ui.notify(`kb-index OK | clear | ${targetScopes.join(", ")}`, "info");
 					return;
 				}
 
@@ -1241,33 +1356,39 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 				validateKbIndexSourceIds(kbCatalog, parsed.scope, sourceIds);
 
 				ctx.ui.setStatus(kbIndexStatusKey, "kb-index: preparing sources...");
-				const updated = await updateKbIndex(indexPaths.dbPath, kbCatalog, {
-					scope: parsed.scope,
-					sourceIds,
-					reindex: parsed.reindex,
-					onSourceStart: (event) => {
-						pi.sendMessage({
-							customType: "kb-index-progress",
-							content: `Indexing source ${event.sourceIndex}/${event.totalSources}: \`${event.sourceId}\`\nPath: \`${event.sourcePath}\``,
-							display: true,
-							details: event,
-						});
-					},
-					onFileProgress: (event) => {
-						const action = event.phase === "remove" ? "removing" : "indexing";
-						ctx.ui.setStatus(
-							kbIndexStatusKey,
-							`kb-index: ${event.sourceId} | ${action} ${event.fileIndex}/${event.totalFiles} | ${path.basename(event.filePath)}`,
-						);
-					},
-				});
+				const updates: Array<{ scope: Exclude<KbIndexScope, "all">; updated: Awaited<ReturnType<typeof updateKbIndex>> }> = [];
+				for (const scope of targetScopes) {
+					const indexPath = pickKbIndexPath(indexPaths, scope);
+					const updated = await updateKbIndex(indexPath.dbPath, kbCatalog, {
+						scope,
+						sourceIds,
+						reindex: parsed.reindex,
+						onSourceStart: (event) => {
+							pi.sendMessage({
+								customType: "kb-index-progress",
+								content: `Indexing source ${event.sourceIndex}/${event.totalSources}: \`${event.sourceId}\`\nPath: \`${event.sourcePath}\``,
+								display: true,
+								details: { scope, ...event },
+							});
+						},
+						onFileProgress: (event) => {
+							const action = event.phase === "remove" ? "removing" : "indexing";
+							ctx.ui.setStatus(
+								kbIndexStatusKey,
+								`kb-index(${scope}): ${event.sourceId} | ${action} ${event.fileIndex}/${event.totalFiles} | ${path.basename(event.filePath)}`,
+							);
+						},
+					});
+					updates.push({ scope, updated });
+				}
 				pi.sendMessage({
 					customType: "kb-index-update",
-					content: formatKbIndexUpdateResult(updated),
+					content: updates.map(({ scope, updated }) => `# ${scope}\n${formatKbIndexUpdateResult(updated)}`).join("\n\n"),
 					display: true,
-					details: updated,
+					details: updates,
 				});
-				ctx.ui.notify(`kb-index OK | updated ${updated.sources.length} source(s) | ${indexPaths.dbPath}`, "info");
+				const updatedSources = updates.reduce((acc, entry) => acc + entry.updated.sources.length, 0);
+				ctx.ui.notify(`kb-index OK | updated ${updatedSources} source(s)`, "info");
 			} catch (error) {
 				ctx.ui.notify(`kb-index FAILED | ${error instanceof Error ? error.message : String(error)}`, "error");
 			} finally {
@@ -1343,7 +1464,9 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			}
 
 			const { config, globalConfigPath, projectConfigPath } = loaded;
-			const kbIndexPaths = resolveKbIndexPaths(ctx.cwd, projectConfigPath, config.KB_INDEX_DIR);
+			const kbIndexPaths = resolveKbIndexPaths(ctx.cwd, projectConfigPath);
+			const sharedIndexPath = pickKbIndexPath(kbIndexPaths, "shared");
+			const projectIndexPath = pickKbIndexPath(kbIndexPaths, "project");
 			const braveRaw = config.web?.braveApiKey;
 			const openrouterRaw = config.distiller?.openrouterApiKey;
 			const distillerModel = config.distiller?.model;
@@ -1364,9 +1487,16 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 					braveApiKey: braveRaw ? maskApiKey(braveRaw) : null,
 					openrouterApiKey: openrouterRaw ? maskApiKey(openrouterRaw) : null,
 					distillerModel,
-					kbIndexDir: config.KB_INDEX_DIR ?? null,
-					kbIndexResolvedDir: kbIndexPaths.indexDir,
-					kbIndexDbPath: kbIndexPaths.dbPath,
+					kbProjectIndex: {
+						available: projectIndexPath.available,
+						indexDir: projectIndexPath.indexDir,
+						dbPath: projectIndexPath.dbPath,
+					},
+					kbSharedIndex: {
+						available: sharedIndexPath.available,
+						indexDir: sharedIndexPath.indexDir,
+						dbPath: sharedIndexPath.dbPath,
+					},
 				},
 				kbCache: {
 					hit: !!existingCache,

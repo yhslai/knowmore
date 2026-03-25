@@ -65,10 +65,10 @@ The ones loaded later override fields from earlier ones.
 
 - `PROJECT_KNOWLEDGE_BASE` must be a **relative** path from the project config folder.
 - `SHARED_KNOWLEDGE_BASE` must be an **absolute** path.
-- `KB_INDEX_DIR` (optional) sets the KB index directory (folder path only, not a filename).
-  - If omitted, default is `.knowmore/kb-index` near the project config (or current working directory if no project config is found).
-  - If relative, it is resolved from that same base directory.
-  - If absolute, it is used as-is.
+- KB index locations are fixed:
+  - shared index: `~/.pi/.knowmore/kb-index/kb.sqlite`
+  - project index: `{project_root}/.knowmore/kb-index/kb.sqlite`
+- `kb_search` and `kb_union_search` support `scope: "project" | "shared" | "all"`.
 - Local KB source discovery uses:
   - implicit catalog: top-level entries under each KB root
   - optional explicit catalog: `kb.catalog.json` in each KB root (supports pointing outside root)
@@ -118,5 +118,6 @@ Then in pi:
 ## Notes
 
 - Fetched URLs are cached in-memory.
-- KB index database file is `kb.sqlite` inside the configured index directory.
-- By default, index directory is `.knowmore/kb-index` near the active project config (or current working directory if no project config is found). Override with `KB_INDEX_DIR`.
+- KB index database file is `kb.sqlite`.
+- Shared index is always `~/.pi/.knowmore/kb-index/kb.sqlite`.
+- Project index is always `{project_root}/.knowmore/kb-index/kb.sqlite`.
