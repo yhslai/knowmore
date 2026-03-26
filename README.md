@@ -23,11 +23,13 @@ Local pi package for web + local knowledge retrieval.
 - `/km-diagnose`: verify config + KB discovery + Brave + distiller connectivity
 - `/km-clear-cache`: clear in-memory web retrieval caches
 
-### Utility skill triggers
+### Utility triggers
 
 - `flush-commit`: Read uncommitted files and decide if commit is sensible
 - `ticket-done`: Mark a ticket as done
 - `ticket-not-done`: Mark a ticket as not done
+- `discuss-ticket`: Read a ticket and think about how we should implement it
+- `plan-ticket`: Write an implementation plan for a ticket
 
 ## Requirements
 
