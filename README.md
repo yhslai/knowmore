@@ -30,6 +30,7 @@ Local pi package for web + local knowledge retrieval.
 - `ticket-not-done`: Mark a ticket as not done
 - `discuss-ticket`: Read a ticket and think about how we should implement it
 - `plan-ticket`: Write an implementation plan for a ticket
+- `implement-ticket`: Implement a ticket step-by-step
 
 ## Requirements
 
