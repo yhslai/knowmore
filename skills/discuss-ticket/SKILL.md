@@ -25,7 +25,7 @@ Implementation Plan should provide a step-by-step approach. Each step should be 
 
 Each step should leave the project in a valid, consistent state. Even for an intermediate state, ensure that the project remains functional and does not introduce bugs or build failures.
 
-If the prompt is `replan-ticket <ticket-name> <step-number>`, re-plan the implementation plan from the specified step. You can safely ignore the steps BEFORE the specified step. You are allowed create/modify/reorder/merge/remove the steps after the specified step.
+If the prompt is `replan-ticket <ticket-name> <step-number>`, re-plan the implementation plan from the specified step. Remember whe replanning you need to do research and gather information again, not just rewriting the existing plan in different words or reordering steps mindlessly. You can safely ignore the steps BEFORE the specified step. You are allowed create/modify/reorder/merge/remove the steps after the specified step.
 
 ## Do Not Commit
 
