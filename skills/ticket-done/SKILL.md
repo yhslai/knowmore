@@ -17,7 +17,4 @@ Read the current working ticket, and think about if the uncommitted files are re
 Write a succinct summary of implementation details of the working ticket, appending it to its own markdown file under a h1 heading `# Done Notes`. Move the .md file to `./{PROJECT_KNOWLEDGE_BASE}/tickets/done`.
 
 ## Commit
-Use git to add and commit the changes.
-
-
-
+Use git to add and commit the changes. The commit message has the format `ticket-done: <ticket-name>`.
