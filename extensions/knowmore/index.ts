@@ -1133,11 +1133,10 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "km_fetch_url",
 		label: "KM Fetch URL",
-		description: "Fetches and extracts readable text from a URL. Use this after km_search_web for deeper context, or when the user/a ticket specifies a URL for reference.",
-		promptSnippet: "Fetch and extract readable text from a URL.",
+		description: "Fetches and extracts readable text from a URL. Use this after km_search_web for deeper context, or when the user/a ticket specifies URL(s) for reference.",
+		promptSnippet: "Fetches and extracts readable text from a URL.",
 		promptGuidelines: [
-			"Use km_fetch_url only for top relevant URLs; avoid fetching many pages at once.",
-			"Keep extracted context concise and cite the source URL in your final answer.",
+			"If used after km_search_web, use km_fetch_url only for top relevant URLs; avoid fetching many pages at once.",
 		],
 		parameters: Type.Object({
 			url: Type.String({ description: "Absolute URL to fetch" }),
