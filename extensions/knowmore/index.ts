@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { keyHint, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
+import { Box, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 
 import {
@@ -1133,7 +1133,7 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "km_fetch_url",
 		label: "KM Fetch URL",
-		description: "Fetches and extracts readable text from a URL. Use this after km_search_web for deeper context.",
+		description: "Fetches and extracts readable text from a URL. Use this after km_search_web for deeper context, or when the user/a ticket specifies a URL for reference.",
 		promptSnippet: "Fetch and extract readable text from a URL.",
 		promptGuidelines: [
 			"Use km_fetch_url only for top relevant URLs; avoid fetching many pages at once.",
@@ -1413,6 +1413,69 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 			} finally {
 				ctx.ui.setStatus(kbIndexStatusKey, undefined);
 			}
+		},
+	});
+
+	pi.registerMessageRenderer("tools-list", (message, { expanded }, theme) => {
+		const details = message.details as
+			| {
+					total: number;
+					active: Array<{ name: string; source: string; description: string }>;
+					inactive: Array<{ name: string; source: string; description: string }>;
+			  }
+			| undefined;
+		if (!details) return new Text(typeof message.content === "string" ? message.content : "", 0, 0);
+
+		const formatTool = (tool: { name: string; source: string; description: string }): string => {
+			const name = theme.fg("accent", theme.bold(tool.name));
+			const source = theme.fg("muted", `[${tool.source}]`);
+			const desc = theme.fg("toolOutput", tool.description);
+			return expanded ? `- ${name} ${source}\n    ${desc}` : `- ${name} ${source} — ${desc}`;
+		};
+
+		const lines: string[] = [
+			theme.fg("toolTitle", theme.bold(`Tools (${details.active.length} active / ${details.total} total)`)),
+			"",
+			theme.fg("success", `Active (${details.active.length}):`),
+			...(details.active.length > 0 ? details.active.map(formatTool) : [theme.fg("muted", "- (none)")]),
+			"",
+			theme.fg("text", `Inactive (${details.inactive.length}):`),
+			...(details.inactive.length > 0 ? details.inactive.map(formatTool) : [theme.fg("muted", "- (none)")]),
+		];
+
+		const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+		box.addChild(new Text(lines.join("\n"), 0, 0));
+		return box;
+	});
+
+	pi.registerCommand("tools", {
+		description: "List active and available tools in this session",
+		handler: async (_args, ctx) => {
+			const allTools = pi.getAllTools().slice().sort((a, b) => a.name.localeCompare(b.name));
+			const activeSet = new Set(pi.getActiveTools());
+			const serializeTool = (tool: (typeof allTools)[number]) => ({
+				name: tool.name,
+				source: tool.sourceInfo?.source ?? "unknown",
+				description:
+					typeof tool.description === "string" && tool.description.trim().length > 0
+						? truncate(tool.description.trim(), 220)
+						: "(no description)",
+			});
+
+			const activeTools = allTools.filter((tool) => activeSet.has(tool.name)).map(serializeTool);
+			const inactiveTools = allTools.filter((tool) => !activeSet.has(tool.name)).map(serializeTool);
+
+			pi.sendMessage({
+				customType: "tools-list",
+				content: `Tools (${activeTools.length} active / ${allTools.length} total)`,
+				display: true,
+				details: {
+					total: allTools.length,
+					active: activeTools,
+					inactive: inactiveTools,
+				},
+			});
+			ctx.ui.notify(`tools | ${activeTools.length} active / ${allTools.length} total`, "info");
 		},
 	});
 
