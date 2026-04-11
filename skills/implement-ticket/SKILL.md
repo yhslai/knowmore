@@ -32,4 +32,4 @@ And after that, brief me what you did and what I need to manually verify, if any
 
 ## Do Not Commit
 
-Never use git commands or commit anything.
+Never use writing git command like `git commit` or `git rm`. Read-only commands like `git diff` or `git status` is okay.
