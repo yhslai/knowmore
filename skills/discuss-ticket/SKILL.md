@@ -9,6 +9,8 @@ description: Read a ticket from the repo's knowledge base and think about how we
 
 Read the ticket from the repo's knowledge base. Usually located in `./{PROJECT_KNOWLEDGE_BASE}/tickets/`. Note that the ticket is usually at top level. If the ticket is nested in `tickets/done` or `tickets/pending` folders, it's likely not the one you want.
 
+You have to always reload the ticket from disk before `discuss-ticket`, as the one in your context might be stale.
+
 The ticket might refer to other tickets, images, documents and resources. Remember to read them too.
 
 ## Research

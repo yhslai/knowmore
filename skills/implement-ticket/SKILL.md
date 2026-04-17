@@ -10,6 +10,8 @@ description: Read a ticket from the repo's knowledge base and think about how we
 
 Read the ticket from the repo's knowledge base. Usually located in `./{PROJECT_KNOWLEDGE_BASE}/tickets/`. Note that the ticket is usually at top level. If the ticket is nested in `tickets/done` or `tickets/pending` folders, it's likely a typo or user mistake, and you should abort.
 
+You have to always reload the ticket from disk before `implement-ticket`, as the one in your context might be stale.
+
 The ticket might refer to other tickets, images, documents and resources. Remember to read them too.
 
 The ticket should have an h1 heading, `## Implementation Plan`, that outlines the steps for implementing the ticket. Each step is an h2 heading with a title like `## S{step_number}: {title}`. If you don't find such a heading, abort. If I forget to specify a step number, abort (don't assume it's the first step).
