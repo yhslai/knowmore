@@ -23,7 +23,7 @@ If the prompt is `discuss-ticket`, tell me your thoughts and if you have several
 
 Implementation Plan should provide a step-by-step approach. Each step should be a `## S{step_number}: {title}` h2 heading. You're allowed to write additional notes or explanations with h3 or h4 heading under each step, or with h2 headings before/after all steps.
 
-Each step should leave the project in a valid, consistent state. Even for an intermediate state, ensure that the project remains functional and does not introduce bugs or build failures.
+Each step should leave the project in a valid, consistent state. Even for an intermediate state, ensure that the project remains functional and does not introduce bugs or build failures. In each step, if the added code should be unit-tested, add tests in the same step. Avoid 'adding tests at the very last step' pattern.
 
 If the prompt is `replan-ticket <ticket-name> <step-number>`, re-plan the implementation plan from the specified step. Remember whe replanning you need to do research and gather information again, not just rewriting the existing plan in different words or reordering steps mindlessly. You can safely ignore the steps BEFORE the specified step. You are allowed create/modify/reorder/merge/remove the steps after the specified step.
 
