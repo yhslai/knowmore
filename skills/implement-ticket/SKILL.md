@@ -1,6 +1,6 @@
 ---
 name: implement-ticket
-description: Read a ticket from the repo's knowledge base and think about how we should implement it. Triggered by `implement-ticket <ticket-name> <step-number>`.
+description: Read a ticket from the repo's knowledge base and actually implement it, step by step. Triggered by `implement-ticket <ticket-name> <step-number>`.
 ---
 
 # Implement Ticket
@@ -17,6 +17,7 @@ The ticket might refer to other tickets, images, documents and resources. Rememb
 The ticket should have an h1 heading, `## Implementation Plan`, that outlines the steps for implementing the ticket. Each step is an h2 heading with a title like `## S{step_number}: {title}`. If you don't find such a heading, abort. If I forget to specify a step number, abort (don't assume it's the first step).
 
 If the ticket provides external documents/URLs, make sure fetch(`km_fetch_url` for URLs) and read them first.
+
 
 ## Implement Step
 
