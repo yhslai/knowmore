@@ -35,6 +35,6 @@ And after that, brief me what you did and what I need to manually verify, if any
 
 ## Do Not Commit
 
-Never use writing git command like `git commit` or `git rm`. Read-only commands like `git diff` or `git status` is okay.
+Never use writing git command like `git commit` or `git rm`. Read-only commands like `git diff` or `git status` is okay. But only if it's necessary (e.g. the ticket itself is about fixing broken git working tree state).
 
 If you find unrelated code changes, it's likely something that happened before you started implementing the ticket and it's okay.
