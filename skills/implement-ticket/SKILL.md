@@ -30,9 +30,11 @@ After implementing the step, the project remains in a valid, consistent state.
 
 After implementing the step, you might ensure the automatic tests pass and the project can be built successfully, if the relevant workflows are set up.
 
-And after that, brief me what you did and what I need to manually verify, if any. You don't need to tell me very generic things like "check if the app runs" or "review the code".
+And after that, brief me what you did and what I need to manually verify, if any. Even if the manual verification steps are already written in the ticket, tell me still. Don't use vague language "check if the app runs" or "review the code".
 
 
 ## Do Not Commit
 
 Never use writing git command like `git commit` or `git rm`. Read-only commands like `git diff` or `git status` is okay.
+
+If you find unrelated code changes, it's likely something that happened before you started implementing the ticket and it's okay.
