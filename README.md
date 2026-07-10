@@ -8,7 +8,8 @@ Local pi package for web + local knowledge retrieval.
 
 - `km_research_web`: search + fetch + distiller model compression (OpenRouter), with optional `intent` guidance
 - `km_search_web`: Brave Search web results (title, URL, snippet)
-- `km_fetch_url`: fetch/extract readable text from URL
+- `km_fetch_url`: fetch/extract readable text from URL (bounded output)
+- `km_fetch_url_full`: fetch/extract all readable text from URL without knowmore truncation
 - `kb_search`: lexical local KB search over a persistent on-disk index (SQLite FTS5/BM25)
 - `kb_union_search`: structured `all[]` + `any[]` local KB search (OR/union), with optional one-shot local context distillation and optional `intent`
   - local KB source catalog is auto-injected into the system prompt in `before_agent_start`

@@ -1174,6 +1174,35 @@ export default function knowmoreExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
+		name: "km_fetch_url_full",
+		label: "KM Fetch URL (Full)",
+		description: "Fetches and extracts all readable text from a URL without applying knowmore's character truncation. Use with care for very large pages.",
+		promptSnippet: "Fetches all extracted readable text from a URL without truncation.",
+		parameters: Type.Object({
+			url: Type.String({ description: "Absolute URL to fetch" }),
+		}),
+		renderCall(args, theme) {
+			const url = typeof args?.url === "string" ? truncate(args.url, 120) : "";
+			return new Text(`${theme.fg("toolTitle", theme.bold("km_fetch_url_full"))} ${theme.fg("accent", url)}`, 0, 0);
+		},
+		renderResult(result, { expanded }, theme) {
+			if (!expanded) return renderCollapsedSummary(theme, getFetchUrlSummary(result.details));
+			return renderExpandedText(result, theme);
+		},
+		async execute(_toolCallId, params, signal) {
+			const url = params.url.trim();
+			if (!/^https?:\/\//i.test(url)) throw new Error("url must start with http:// or https://");
+
+			// Do not use the bounded km_fetch_url cache: it may contain truncated content.
+			const fetched = await fetchUrlContent(url, Number.MAX_SAFE_INTEGER, signal);
+			return {
+				content: [{ type: "text", text: `Fetched full URL content for ${url}${fetched.title ? `\\nTitle: ${fetched.title}` : ""}\\n\\n${fetched.content}` }],
+				details: { url, source: "network", title: fetched.title, content: fetched.content },
+			};
+		},
+	});
+
+	pi.registerTool({
 		name: "km_research_web",
 		label: "KM Research Web",
 		description:
