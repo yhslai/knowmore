@@ -1,6 +1,6 @@
 ---
 name: flush-commit
-description: Read all the uncommitted and untracked files and see if it's sensible to make commit. Triggered by `flush-commit`.
+description: Read all the uncommitted and untracked files and see if it's sensible to make commit. Triggered by `flush-commit`, or by the exact prompt `just-commit`.
 ---
 
 # Flush Commit
@@ -13,6 +13,8 @@ Read these files and check:
 - They're just scaffolding or housekeeping stuff, not implementing features or important changes
 - They're not big binary files that are not tracked by git-lfs
 - They're not files that are conventionally ignored by git
+
+When the prompt is exactly `just-commit` (with no other words), skip the first check. The other two checks are still required.
 
 If any of these checks failed, abort and tell me what's wrong.
 
