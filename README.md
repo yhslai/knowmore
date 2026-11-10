@@ -114,6 +114,28 @@ Then in pi:
 - For external knowledge, call `km_research_web` first.
 - If needed, follow specific source URLs with `km_fetch_url`.
 
+## Claude Code (MCP server)
+
+The same local KB tools are exposed to Claude Code through a stdio MCP server in `cli/`. It reuses the same
+config files (`knowmore.config.default.json` + project `knowmore.config.json`) and the same SQLite indexes as pi,
+so documents are indexed once and shared by both harnesses. Requires Node >= 22.18 (runs the `.ts` sources directly).
+
+```powershell
+claude mcp add --scope user knowmore -- node C:/path/to/knowmore/cli/knowmore.mjs mcp
+```
+
+Tools: `kb_search`, `kb_union_search` (`distill` defaults to false), `kb_catalog`, `kb_index_update`.
+The KB catalog is provided to Claude via the MCP server instructions. The project KB is resolved from the
+directory Claude Code was started in (override with `KNOWMORE_CWD`).
+
+The same entry point also works as a terminal CLI:
+
+```powershell
+node cli/knowmore.mjs catalog
+node cli/knowmore.mjs index status
+node cli/knowmore.mjs index update --scope shared   # or project / all, --source <id>, --reindex
+```
+
 ## Development loop
 
 1. Edit files in `extensions/` or `skills/`
