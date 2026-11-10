@@ -1,27 +1,46 @@
 ---
 name: flush-push
-description: Read all the uncommitted and untracked files and see if it's sensible to make commit. Then push to remote. Triggered by `flush-push`, or by the exact prompt `just-push`.
+description: Review all uncommitted and untracked changes, commit them in logically separate groups, then push. Triggered by `flush-push`, or by the exact prompt `just-push`.
 ---
 
 # Flush Commit
 
 ## Get Files
-Via git, read all the current uncommitted change and untracked files.
+
+Via git, inspect all staged, unstaged, and untracked changes. Read the diffs and new files.
 
 ## Sanity Check
-Read these files and check:
-- They're just scaffolding or housekeeping stuff, not implementing features or important changes
-- They're not big binary files that are not tracked by git-lfs
-- They're not files that are conventionally ignored by git
 
-When the prompt is exactly `just-push` (with no other words), skip the first check. The other two checks are still required.
+Check that:
+- Changes are scaffolding or housekeeping, not features or other important changes.
+- No large binary files are being added without git-lfs.
+- No conventionally ignored files are being committed.
 
-If any of these checks failed, abort and tell me what's wrong.
+When the prompt is exactly `just-push`, skip only the first check. This permits feature changes; it does not permit bundling unrelated changes.
+
+If any required check fails, abort and explain why.
+
+## Group Changes
+
+Group changes into logically cohesive commits before staging anything.
+
+- Each commit should have one clear purpose.
+- Keep related implementation, tests, and documentation together.
+- Separate unrelated features, fixes, and housekeeping.
+- Do not treat everything currently modified as one commit.
+- Include already-staged changes in this review; staging does not determine commit boundaries.
+- If one file contains unrelated changes, stage the relevant hunks separately.
+
+Briefly state the planned commit groups before proceeding.
 
 ## Commit
-If the sanity check passes, use git to add and commit the changes.
+
+Stage and commit each logical group separately with a descriptive message.
+
+Review each staged diff before committing to confirm it contains only the intended group. Preserve all working-tree changes.
 
 ## Push
-Push to the default remote unless specified otherwise.
 
+After all groups are committed, push to the default remote unless specified otherwise.
 
+Confirm push success and report the resulting commits and working-tree status. If pushing fails, report the failure without claiming success.
