@@ -22,6 +22,7 @@ import {
 	type KbIndexScope,
 } from "./kb-index.js";
 import { preprocessDocumentTextForDistiller } from "./content-cleaning.js";
+import { registerQuotaResume } from "./quota-resume.js";
 import {
 	DEFAULT_TIMEOUT_MS,
 	buildAndCacheKbCatalogContext,
@@ -262,6 +263,7 @@ async function fetchUrlContent(url: string, maxChars: number, signal?: AbortSign
 
 // noinspection JSUnusedGlobalSymbols
 export default function knowmoreExtension(pi: ExtensionAPI) {
+	registerQuotaResume(pi);
 	pi.on("before_agent_start", (event, ctx) => {
 		const baseSystemPrompt = stripInjectedKbCatalogPrompt(event.systemPrompt);
 		try {

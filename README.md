@@ -23,6 +23,33 @@ Local pi package for web + local knowledge retrieval.
   - supports `--scope project|shared|all`, `--all`, and repeated `--source <sourceId>`
 - `/km-diagnose`: verify config + KB discovery + Brave + distiller connectivity
 - `/km-clear-cache`: clear in-memory web retrieval caches
+- `/km-quota-wait [status|cancel|off|on]`: control ChatGPT/Codex quota auto-resume
+
+### Quota auto-resume (Windows)
+
+Knowmore automatically waits after an `openai-codex` ChatGPT usage-limit error, then
+continues the interrupted conversation. Requires a current Pi host with
+`agent_settled` and `provider_stream_event` extension events (legacy peer typings
+alone do not indicate host support). Enabled by default in TUI/RPC sessions; it does
+not run in print/JSON mode, the MCP server, or the standalone CLI.
+
+- Uses the provider reset timestamp or its rounded retry estimate, plus a one-minute
+  buffer. If neither is available, waits five hours plus the buffer. If still
+  quota-limited after resuming, waits again; no quota bypass or provider switching.
+- Keeps Windows awake **only during the quota wait**, using a temporary thread-scoped
+  sleep request. The screen may turn off. No power-plan settings are changed.
+- Releases the sleep blocker **before** resuming model work. Escape,
+  `/km-quota-wait cancel`, new input, model/session/branch changes, compaction,
+  reload, and shutdown cancel the wait and release it too. `off` disables future
+  automatic waits for the current extension runtime; `on` re-enables them.
+- A hidden Windows PowerShell helper releases its request on stdin EOF (including
+  Pi crashing), on helper exit, or within 20 seconds without a Pi heartbeat.
+  Failure to acquire/maintain the blocker cancels auto-resume rather than claiming
+  the computer will stay awake. Manual sleep, closing a laptop lid, shutdown, and
+  OS policy can still override the request.
+- Pi must remain running. Waits are intentionally not restored after reload/restart.
+  No authentication files or tokens are read by this feature. Tests are offline:
+  `npm run test:quota` (includes brief real Windows sleep-request cleanup checks).
 
 ### Utility triggers
 

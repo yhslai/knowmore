@@ -9,7 +9,8 @@
     "skills": ["./skills"]
   },
   "scripts": {
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test:quota": "node --test tests/quota-resume.test.mjs"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",
