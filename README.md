@@ -24,6 +24,51 @@ Local pi package for web + local knowledge retrieval.
 - `/km-diagnose`: verify config + KB discovery + Brave + distiller connectivity
 - `/km-clear-cache`: clear in-memory web retrieval caches
 - `/km-quota-wait [status|cancel|off|on]`: control ChatGPT/Codex quota auto-resume
+- `/km-quota [cached]`: check current Codex/OpenRouter quota; `cached` is offline Codex-only
+
+### Checking quota
+
+Run `/km-quota`; it selects the strategy from the **active model's provider**, not
+from Knowmore's distiller configuration. Reports are UI-only session entries, not
+messages added to the model's context, and never trigger a model call.
+
+- **`openai-codex`:** makes one authenticated read-only
+  `GET https://chatgpt.com/backend-api/wham/usage`, the usage endpoint used by
+  Codex CLI. This works without waiting for response headers or quota stream events.
+  Shows remaining percentages and reset times, including additional metered buckets
+  when supplied; usual windows are labeled 5-hour and weekly. Uses Pi's resolved
+  model credential and optional account-selection header without reading auth files,
+  decoding tokens, or collecting browser cookies. This is an **internal endpoint**,
+  not a stable public API; denial/invalid data is reported explicitly, not treated
+  as zero usage or a full allowance. If lookup fails and an observation is cached,
+  it is shown with a clear failure/staleness label.
+  - `/km-quota cached` reads only local observations, with **no auth lookup or
+    network request**. Cache is populated by live checks, normal response headers,
+    and `codex.rate_limits` stream events when available, separately per model.
+    Missing data is unknown; a passed reset does not imply a full allowance.
+    Cache clears on reload/shutdown.
+- **`openrouter`:** makes one authenticated `GET https://openrouter.ai/api/v1/key`
+  metadata request using Pi's resolved credential for the active model (including
+  model-specific auth overrides). Shows the key's remaining spending cap and reset
+  interval, available spend counters, effective enforced budget, and free-model
+  daily request allowance when returned. An uncapped key does **not** mean unlimited
+  account credit; the key budget is **not prepaid account balance**. No separate
+  credits/account endpoint is called. The request has a 10-second deadline, does not
+  follow redirects, and refuses custom gateway URLs. Network/auth/HTTP failures are
+  reported without exposing credentials or raw response bodies. Model changes,
+  another quota check, and shutdown cancel outstanding checks.
+- Other providers report unsupported without performing any network/auth lookup.
+  Virtual providers are not guessed from their display name or underlying model.
+
+Both live lookups have a 10-second deadline, refuse custom gateway URLs, and do not
+follow redirects. Changing models, starting another check, or shutting down cancels
+the lookup. The feature uses current Pi's provider-response/stream hooks and UI
+entry renderers. Credentials are resolved only in memory for an explicit live
+check; they are never displayed, logged, or stored by the feature. There is no
+background polling or billed completion. Reference contracts:
+[OpenRouter key limits](https://openrouter.ai/docs/api_reference/limits),
+[Codex usage endpoint](https://github.com/openai/codex/blob/main/codex-rs/backend-client/src/client/rate_limit_resets.rs),
+and [Codex quota events/headers](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/rate_limits.rs).
 
 ### Quota auto-resume (Windows)
 

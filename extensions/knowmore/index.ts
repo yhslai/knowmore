@@ -23,6 +23,7 @@ import {
 } from "./kb-index.js";
 import { preprocessDocumentTextForDistiller } from "./content-cleaning.js";
 import { registerQuotaResume } from "./quota-resume.js";
+import { registerQuotaCommand } from "./quota-command.js";
 import {
 	DEFAULT_TIMEOUT_MS,
 	buildAndCacheKbCatalogContext,
@@ -264,6 +265,16 @@ async function fetchUrlContent(url: string, maxChars: number, signal?: AbortSign
 // noinspection JSUnusedGlobalSymbols
 export default function knowmoreExtension(pi: ExtensionAPI) {
 	registerQuotaResume(pi);
+	registerQuotaCommand(pi);
+	// Current Pi UI API, absent from Knowmore's legacy peer typings.
+	const quotaUI = pi as unknown as {
+		registerEntryRenderer(name: string, renderer: (entry: { data?: unknown }, options: unknown,
+			theme: { fg(color: "toolOutput", text: string): string }) => Text): void;
+	};
+	quotaUI.registerEntryRenderer("knowmore-quota", (entry, _options, theme) => {
+		const data = entry.data as { text?: string } | undefined;
+		return new Text(theme.fg("toolOutput", data?.text ?? "Quota report unavailable."), 0, 0);
+	});
 	pi.on("before_agent_start", (event, ctx) => {
 		const baseSystemPrompt = stripInjectedKbCatalogPrompt(event.systemPrompt);
 		try {

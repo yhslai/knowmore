@@ -10,7 +10,7 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "test:quota": "node --test tests/quota-resume.test.mjs"
+    "test:quota": "node --test tests/quota-resume.test.mjs tests/quota-command.test.mjs"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",
