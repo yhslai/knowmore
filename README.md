@@ -24,11 +24,11 @@ Local pi package for web + local knowledge retrieval.
 - `/km-diagnose`: verify config + KB discovery + Brave + distiller connectivity
 - `/km-clear-cache`: clear in-memory web retrieval caches
 - `/km-quota-wait [status|cancel|off|on]`: control ChatGPT/Codex quota auto-resume
-- `/km-quota [cached]`: check current Codex/OpenRouter quota; `cached` is offline Codex-only
+- `/km-usage [cached]`: check current Codex/OpenRouter quota; `cached` is offline Codex-only
 
 ### Checking quota
 
-Run `/km-quota`; it selects the strategy from the **active model's provider**, not
+Run `/km-usage`; it selects the strategy from the **active model's provider**, not
 from Knowmore's distiller configuration. Reports are UI-only session entries, not
 messages added to the model's context, and never trigger a model call.
 
@@ -42,7 +42,7 @@ messages added to the model's context, and never trigger a model call.
   not a stable public API; denial/invalid data is reported explicitly, not treated
   as zero usage or a full allowance. If lookup fails and an observation is cached,
   it is shown with a clear failure/staleness label.
-  - `/km-quota cached` reads only local observations, with **no auth lookup or
+  - `/km-usage cached` reads only local observations, with **no auth lookup or
     network request**. Cache is populated by live checks, normal response headers,
     and `codex.rate_limits` stream events when available, separately per model.
     Missing data is unknown; a passed reset does not imply a full allowance.

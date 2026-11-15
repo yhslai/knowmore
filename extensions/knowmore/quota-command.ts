@@ -91,11 +91,11 @@ export function registerQuotaCommand(pi: ExtensionAPI, dependencies: { now?: () 
   pi.on("model_select", invalidate);
   pi.on("session_shutdown", () => { invalidate(); snapshots.clear(); requestModel = undefined; });
 
-  pi.registerCommand("km-quota", {
-    description: "Read current Codex/OpenRouter quota without a model call; /km-quota cached shows offline Codex observations",
+  pi.registerCommand("km-usage", {
+    description: "Read current Codex/OpenRouter quota without a model call; /km-usage cached shows offline Codex observations",
     handler: async (args, ctx) => {
       const cachedOnly = args.trim() === "cached";
-      if (args.trim() && !cachedOnly) { ctx.ui.notify("Usage: /km-quota [cached] (cached is Codex-only)", "warning"); return; }
+      if (args.trim() && !cachedOnly) { ctx.ui.notify("Usage: /km-usage [cached] (cached is Codex-only)", "warning"); return; }
       invalidate();
       const version = generation;
       const model = ctx.model;
@@ -117,10 +117,10 @@ export function registerQuotaCommand(pi: ExtensionAPI, dependencies: { now?: () 
         return;
       }
       if (!codex && model.provider !== "openrouter") {
-        ctx.ui.notify("/km-quota supports openai-codex and openrouter. The active provider is not supported.", "warning");
+        ctx.ui.notify("/km-usage supports openai-codex and openrouter. The active provider is not supported.", "warning");
         return;
       }
-      if (cachedOnly) { ctx.ui.notify("/km-quota cached is only available for Codex. Use /km-quota for OpenRouter.", "warning"); return; }
+      if (cachedOnly) { ctx.ui.notify("/km-usage cached is only available for Codex. Use /km-usage for OpenRouter.", "warning"); return; }
       const label = codex ? "Codex usage" : "OpenRouter key quota";
       const controller = new AbortController();
       inFlight = controller;

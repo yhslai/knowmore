@@ -58,7 +58,7 @@ function fixture(provider = 'openai-codex', options = {}) {
   return { ctx, entries, notices, requests, statuses,
     get authCalls() { return authCalls; },
     async emit(name, value = {}) { for (const callback of events.get(name) ?? []) await callback(value, ctx); },
-    run(args = '') { return commands.get('km-quota').handler(args, ctx); },
+    run(args = '') { return commands.get('km-usage').handler(args, ctx); },
     report() { return entries.at(-1)?.data.text ?? ''; },
   };
 }
