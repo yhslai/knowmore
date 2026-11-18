@@ -12,11 +12,14 @@ Via git, inspect all staged, unstaged, and untracked changes. Read the diffs and
 ## Sanity Check
 
 Check that:
+
 - Changes are scaffolding or housekeeping, not features or other important changes.
 - No large binary files are being added without git-lfs.
 - No conventionally ignored files are being committed.
 
 When the prompt is exactly `just-push`, skip only the first check. This permits feature changes; it does not permit bundling unrelated changes.
+
+When the prompt is exactly `just-commit`, it's the same as `just-push` but commit without pushing.
 
 If any required check fails, abort and explain why.
 
